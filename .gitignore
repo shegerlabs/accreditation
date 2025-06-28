@@ -1,0 +1,14 @@
+node_modules
+.DS_store
+
+/.cache
+/build
+.env
+/prisma/seed.ts
+
+/prisma/data.db
+
+*.local.*
+
+# generated files
+# /app/components/ui/icons

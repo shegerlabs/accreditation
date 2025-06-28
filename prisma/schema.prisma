@@ -1,0 +1,673 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RecurrencePattern {
+  NONE
+  DAILY
+  WEEKLY
+  MONTHLY
+  YEARLY
+}
+
+enum EventStatus {
+  DRAFT
+  PUBLISHED
+  CANCELED
+  COMPLETED
+  POSTPONED
+  RESCHEDULED
+}
+
+enum TemplateType {
+  BADGE
+  FLYER
+  BANNER
+  LOGO
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  LOCKED
+  DELETED
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum Action {
+  APPROVE
+  REJECT
+  NOTIFY
+  PRINT
+  ARCHIVE
+  CANCEL
+  BYPASS
+}
+
+enum AccessLevel {
+  FREE
+  OPEN
+  CLOSED
+  ALL
+}
+
+enum ApprovalResult {
+  SUCCESS
+  FAILURE
+  SKIPPED
+}
+
+enum RequestStatus {
+  PENDING
+  INPROGRESS
+  APPROVED
+  REJECTED
+  CANCELLED
+  PRINTED
+  NOTIFIED
+  ARCHIVED
+  BYPASSED
+}
+
+enum DocumentType {
+  PASSPORT
+  PHOTO
+  LETTER
+  OTHER
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  APPROVE
+  REJECT
+  EXPORT
+  IMPORT
+  PRINT
+  BYPASS
+  OTHER
+}
+
+enum AuditEntityType {
+  TENANT
+  USER
+  ROLE
+  PERMISSION
+  MENU
+  MENU_ITEM
+  PARTICIPANT
+  EVENT
+  MEETING
+  VENUE
+  WORKFLOW
+  STEP
+  INVITATION
+  TEMPLATE
+  SYSTEM
+  OTHER
+}
+
+model Tenant {
+  id               String            @id @default(cuid())
+  name             String            @unique
+  email            String            @unique
+  phone            String
+  website          String?
+  address          String?
+  city             String?
+  state            String?
+  zip              String?
+  country          String?
+  billingInfo      Json?
+  subscriptionPlan String
+  featureFlags     Json?
+  usageMetrics     Json?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  events           Event[]
+  users            User[]
+  venues           Venue[]
+  meetingTypes     MeetingType[]
+  participantTypes ParticipantType[]
+  meetings         Meeting[]
+  restrictions     Restriction[]
+  constraints      Constraint[]
+  workflows        Workflow[]
+  steps            Step[]
+  invitations      Invitation[]
+  participants     Participant[]
+  templates        Template[]
+  auditLogs        AuditLog[]
+
+  @@index([name, email])
+}
+
+model User {
+  id                  String     @id @default(cuid())
+  email               String     @unique
+  username            String     @unique
+  name                String?
+  status              UserStatus @default(ACTIVE)
+  failedLoginAttempts Int        @default(0)
+  lastFailedLoginAt   DateTime?
+  lockedAt            DateTime?
+  lockReason          String?
+  lockCount           Int        @default(0)
+  autoUnlockAt        DateTime?
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+  image               UserImage?
+  password            Password?
+  tenantId            String?
+  tenant              Tenant?    @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  roles               Role[]
+
+  sessions     Session[]
+  approvals    Approval[]
+  participants Participant[]
+  auditLogs    AuditLog[]
+}
+
+model UserImage {
+  id          String   @id @default(cuid())
+  altText     String?
+  contentType String
+  blob        Bytes
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Password {
+  hash   String
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+}
+
+model Session {
+  id             String   @id @default(cuid())
+  expirationDate DateTime
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  metadata       Json? // Stores userAgent and ipAddress
+
+  @@index([userId])
+}
+
+model Verification {
+  id        String    @id @default(cuid())
+  type      String
+  target    String
+  secret    String
+  algorithm String
+  digits    Int
+  period    Int
+  charSet   String
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@unique([target, type])
+}
+
+model Role {
+  id          String       @id @default(cuid())
+  name        String       @unique
+  description String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  permissions Permission[]
+  users       User[]
+  menus       Menu[]
+  menuItems   MenuItem[]
+  steps       Step[]
+}
+
+model Permission {
+  id          String   @id @default(cuid())
+  action      String
+  entity      String
+  access      String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  roles       Role[]
+
+  @@unique([action, entity, access])
+}
+
+model Menu {
+  id        String     @id @default(cuid())
+  name      String     @unique
+  title     String
+  items     MenuItem[]
+  roles     Role[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+}
+
+model MenuItem {
+  id        String   @id @default(cuid())
+  name      String
+  title     String
+  link      String
+  icon      String?
+  menuId    String
+  menu      Menu     @relation(fields: [menuId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  roles     Role[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([menuId, name])
+}
+
+model Venue {
+  id          String    @id @default(cuid())
+  name        String
+  description String?
+  contactInfo String?
+  address     String
+  city        String
+  state       String
+  zip         String
+  country     String
+  capacity    Int
+  latitude    Float?
+  longitude   Float?
+  amenities   String?
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  meetings    Meeting[]
+
+  @@unique([tenantId, name])
+}
+
+model Template {
+  id                String          @id @default(cuid())
+  name              String
+  description       String?
+  templateType      TemplateType
+  tenantId          String
+  tenant            Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  eventId           String
+  event             Event           @relation(fields: [eventId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  participantTypeId String
+  participantType   ParticipantType @relation(fields: [participantTypeId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  attachments       Attachment[]
+
+  @@unique([tenantId, eventId, templateType, name])
+}
+
+model Attachment {
+  id          String   @id @default(cuid())
+  altText     String?
+  contentType String
+  fileName    String
+  extension   String
+  templateId  String
+  template    Template @relation(fields: [templateId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([templateId])
+}
+
+model Event {
+  id          String      @id @default(cuid())
+  name        String
+  description String
+  tenantId    String
+  tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  status      EventStatus
+  startDate   DateTime
+  endDate     DateTime
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  meetings     Meeting[]
+  restrictions Restriction[]
+  workflows    Workflow[]
+  invitations  Invitation[]
+  participants Participant[]
+  templates    Template[]
+
+  @@unique([tenantId, name])
+  @@unique([tenantId, name, startDate, endDate])
+  @@index([tenantId, name])
+  @@index([tenantId, status])
+}
+
+model Country {
+  id                       String        @id @default(cuid())
+  name                     String
+  code                     String
+  createdAt                DateTime      @default(now())
+  updatedAt                DateTime      @updatedAt
+  participantNationalities Participant[] @relation("Nationality")
+  participantCountries     Participant[] @relation("Country")
+}
+
+model MeetingType {
+  id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  name        String
+  description String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  meetings    Meeting[]
+
+  @@unique([tenantId, name])
+}
+
+model ParticipantType {
+  id                               String        @id @default(cuid())
+  tenantId                         String
+  tenant                           Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  name                             String
+  description                      String
+  priority                         Priority
+  canSendPrivateRequest            Boolean
+  canSendAnonymousRequest          Boolean
+  isExemptedFromFullQuota          Boolean
+  isExemptedFromOpenSessionQuota   Boolean
+  isExemptedFromClosedSessionQuota Boolean
+  createdAt                        DateTime      @default(now())
+  updatedAt                        DateTime      @updatedAt
+  constraints                      Constraint[]
+  workflows                        Workflow[]
+  invitations                      Invitation[]
+  participants                     Participant[]
+  templates                        Template[]
+
+  @@unique([tenantId, name])
+}
+
+model Meeting {
+  id            String      @id @default(cuid())
+  tenantId      String
+  tenant        Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  eventId       String
+  event         Event       @relation(fields: [eventId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  venueId       String
+  venue         Venue       @relation(fields: [venueId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  meetingTypeId String
+  meetingType   MeetingType @relation(fields: [meetingTypeId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  accessLevel   AccessLevel
+  startDate     DateTime
+  endDate       DateTime
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@unique([tenantId, eventId, meetingTypeId, venueId, accessLevel, startDate, endDate])
+}
+
+model Restriction {
+  id          String       @id @default(cuid())
+  tenantId    String
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  eventId     String
+  event       Event        @relation(fields: [eventId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  name        String
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  constraints Constraint[]
+  invitations Invitation[]
+
+  @@unique([tenantId, eventId, name])
+  @@index([eventId, name])
+}
+
+model Constraint {
+  id                String          @id @default(cuid())
+  tenantId          String
+  tenant            Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  name              String
+  restrictionId     String
+  restriction       Restriction     @relation(fields: [restrictionId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  participantTypeId String
+  participantType   ParticipantType @relation(fields: [participantTypeId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  accessLevel       AccessLevel
+  quota             Int
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@unique([tenantId, restrictionId, participantTypeId, accessLevel])
+  @@index([restrictionId, participantTypeId])
+}
+
+model Workflow {
+  id                String          @id @default(cuid())
+  name              String
+  tenantId          String
+  tenant            Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  eventId           String
+  event             Event           @relation(fields: [eventId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  participantTypeId String
+  participantType   ParticipantType @relation(fields: [participantTypeId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  steps             Step[]
+
+  @@unique([tenantId, eventId, participantTypeId, name])
+  @@index([eventId, participantTypeId])
+}
+
+model Step {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  order      Int
+  name       String
+  action     Action
+  workflowId String
+  workflow   Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  roleId     String
+  role       Role     @relation(fields: [roleId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  nextStepId String?
+
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  participants Participant[]
+  approvals    Approval[]
+
+  @@unique([tenantId, workflowId, roleId, action, name])
+}
+
+model Invitation {
+  id                String          @id @default(cuid())
+  tenantId          String
+  tenant            Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  organization      String
+  email             String
+  eventId           String
+  event             Event           @relation(fields: [eventId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  participantTypeId String
+  participantType   ParticipantType @relation(fields: [participantTypeId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  restrictionId     String?
+  restriction       Restriction?    @relation(fields: [restrictionId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  maximumQuota      Int?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  participants      Participant[]
+
+  @@unique([tenantId, eventId, participantTypeId, restrictionId, organization, email])
+}
+
+model Participant {
+  id                    String                @id @default(cuid())
+  userId                String
+  user                  User                  @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  tenantId              String
+  tenant                Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  eventId               String
+  event                 Event                 @relation(fields: [eventId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  invitationId          String?
+  invitation            Invitation?           @relation(fields: [invitationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  participantTypeId     String
+  participantType       ParticipantType       @relation(fields: [participantTypeId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  registrationCode      String                @unique
+  gender                String
+  title                 String
+  firstName             String
+  familyName            String
+  dateOfBirth           DateTime
+  nationalityId         String
+  nationality           Country               @relation("Nationality", fields: [nationalityId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  passportNumber        String
+  passportExpiry        DateTime
+  organization          String
+  jobTitle              String
+  countryId             String
+  country               Country               @relation("Country", fields: [countryId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  city                  String
+  email                 String
+  website               String?
+  telephone             String?
+  address               String?
+  preferredLanguage     String?
+  needsVisa             Boolean?
+  needsCarPass          Boolean?
+  vehicleType           String?
+  vehiclePlateNumber    String?
+  needsCarFromOrganizer Boolean
+  flightNumber          String?
+  arrivalDate           DateTime?
+  wishList              String?
+  attendClosedSession   Boolean               @default(false)
+  status                RequestStatus
+  stepId                String
+  step                  Step                  @relation(fields: [stepId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  approvals             Approval[]
+  documents             ParticipantDocument[]
+
+  @@unique([tenantId, eventId, email])
+}
+
+model ParticipantDocument {
+  id            String       @id @default(cuid())
+  documentType  DocumentType
+  altText       String?
+  contentType   String
+  fileName      String
+  extension     String
+  participantId String
+  participant   Participant  @relation(fields: [participantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@index([participantId])
+}
+
+model Approval {
+  id            String         @id @default(cuid())
+  participantId String
+  participant   Participant    @relation(fields: [participantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  stepId        String
+  step          Step           @relation(fields: [stepId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  result        ApprovalResult
+  remarks       String?
+  userId        String
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@unique([participantId, stepId, userId, createdAt])
+}
+
+model AuditLog {
+  id          String          @id @default(cuid())
+  tenantId    String?
+  tenant      Tenant?         @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  userId      String?
+  user        User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action      AuditAction
+  entityType  AuditEntityType
+  entityId    String?
+  description String
+  metadata    Json?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime        @default(now())
+
+  @@index([tenantId, action])
+  @@index([tenantId, entityType, entityId])
+  @@index([tenantId, userId])
+  @@index([createdAt])
+}
+
+model Draft {
+  id                String  @id @default(cuid())
+  userId            String  @unique
+  tenantId          String  @default("")
+  eventId           String  @default("")
+  participantTypeId String  @default("")
+  invitationId      String?
+
+  // General Info
+  requestFor     String?  @default("MYSELF") // Can be "MYSELF" or "OTHERS"
+  gender         String   @default("")
+  title          String   @default("")
+  firstName      String   @default("")
+  familyName     String   @default("")
+  dateOfBirth    DateTime @default(now())
+  nationalityId  String   @default("")
+  passportNumber String   @default("")
+  passportExpiry DateTime @default(now())
+
+  // Professional Info
+  organization      String  @default("")
+  jobTitle          String  @default("")
+  countryId         String  @default("")
+  city              String  @default("")
+  email             String  @default("")
+  website           String?
+  telephone         String?
+  address           String?
+  preferredLanguage String?
+
+  // Wishlist
+  needsVisa             Boolean   @default(false)
+  needsCarPass          Boolean   @default(false)
+  vehicleType           String?
+  vehiclePlateNumber    String?
+  needsCarFromOrganizer Boolean   @default(false)
+  flightNumber          String?
+  arrivalDate           DateTime?
+  wishList              String?
+
+  // Metadata
+  lastUpdated DateTime  @updatedAt
+  createdAt   DateTime  @default(now())
+  expiresAt   DateTime?
+
+  @@index([expiresAt])
+}
