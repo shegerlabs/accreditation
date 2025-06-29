@@ -20,59 +20,10 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
 		status: 403,
 	})
 
-	// Delete any existing draft
-	await prisma.draft.deleteMany({
-		where: { userId: user.id },
-	})
-
-	// Create new draft with participant data
-	await prisma.draft.create({
-		data: {
-			id: participant.id, // Use the same ID as the participant for edit mode
-			userId: user.id,
-			tenantId: participant.tenantId,
-			eventId: participant.eventId,
-			participantTypeId: participant.participantTypeId,
-			invitationId: participant.invitationId,
-
-			// General Info
-			requestFor: participant.email === user.email ? 'MYSELF' : 'OTHERS',
-			gender: participant.gender,
-			title: participant.title,
-			firstName: participant.firstName,
-			familyName: participant.familyName,
-			dateOfBirth: participant.dateOfBirth,
-			nationalityId: participant.nationalityId,
-			passportNumber: participant.passportNumber,
-			passportExpiry: participant.passportExpiry,
-
-			// Professional Info
-			organization: participant.organization,
-			jobTitle: participant.jobTitle,
-			countryId: participant.countryId,
-			city: participant.city,
-			email: participant.email,
-			website: participant.website ?? undefined,
-			telephone: participant.telephone ?? undefined,
-			address: participant.address ?? undefined,
-			preferredLanguage: participant.preferredLanguage ?? undefined,
-
-			// Wishlist
-			needsVisa: participant.needsVisa ?? false,
-			needsCarPass: participant.needsCarPass ?? false,
-			vehicleType: participant.vehicleType ?? undefined,
-			vehiclePlateNumber: participant.vehiclePlateNumber ?? undefined,
-			needsCarFromOrganizer: participant.needsCarFromOrganizer,
-			flightNumber: participant.flightNumber ?? undefined,
-			arrivalDate: participant.arrivalDate ?? undefined,
-			wishList: participant.wishList ?? undefined,
-
-			// Metadata for edit mode
-			expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
-		},
-	})
-
-	return redirect('/requests/general')
+	// Redirect to the new registration route with participant data
+	return redirect(
+		`/requests/registration?eventId=${participant.eventId}&tenantId=${participant.tenantId}&participantId=${participant.id}`,
+	)
 }
 
 export default function EditParticipantRoute() {

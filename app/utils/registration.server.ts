@@ -4,12 +4,7 @@ import { createWizard } from './wizard.server'
 
 export const registrationWizard = createWizard({
 	name: 'registration',
-	routes: [
-		'/requests/general',
-		'/requests/professional',
-		'/requests/wishlist',
-		'/requests/documents',
-	],
+	routes: ['/requests/registration'],
 	onStepChange: (_current, _next) => {},
 	validateStep: (_data, _currentStep) => {
 		return true

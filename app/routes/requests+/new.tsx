@@ -37,7 +37,6 @@ import { validateCSRF } from '~/utils/csrf.server'
 import { prisma } from '~/utils/db.server'
 import { checkHoneypot } from '~/utils/honeypot.server'
 import { invariantResponse, useIsPending } from '~/utils/misc'
-import { registrationWizard } from '~/utils/registration.server'
 import { useOptionalUser, userHasRole } from '~/utils/user'
 
 export const NewParticipantSchema = z.object({
@@ -206,26 +205,10 @@ export async function action({ request }: ActionFunctionArgs) {
 		)
 	}
 
-	const { getHeaders } = await registrationWizard.register(request)
-
-	// Delete any existing draft for this user
-	await prisma.draft.deleteMany({
-		where: { userId: user.id },
-	})
-
-	// Create new draft
-	await prisma.draft.create({
-		data: {
-			userId: user.id,
-			tenantId: submission.value.tenantId,
-			eventId: submission.value.eventId,
-			participantTypeId: '',
-			expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
-		},
-	})
-
-	const headers = await getHeaders()
-	return redirect('/requests/general', { headers })
+	// Redirect to the new registration route instead of creating a draft
+	return redirect(
+		`/requests/registration?eventId=${submission.value.eventId}&tenantId=${submission.value.tenantId}`,
+	)
 }
 
 export default function NewParticipantRoute() {
