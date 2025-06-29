@@ -203,7 +203,7 @@ export default function IndexRoute() {
 											] ?? ''
 										}
 									>
-										{participant.status}
+										{status}
 									</Badge>
 								)
 							},
