@@ -218,7 +218,7 @@ export default function ParticipantProfile() {
 
 	return (
 		<div className="container mx-auto px-4">
-			{approvals?.[0]?.result === 'FAILURE' && (
+			{approvals?.[0]?.result === 'FAILURE' && step === 'first-validator' && (
 				<Alert variant="destructive">
 					<AlertTitle>Request Rejected</AlertTitle>
 					<AlertDescription>
