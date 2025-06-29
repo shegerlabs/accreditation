@@ -4,6 +4,7 @@ import { EditIcon, EyeIcon, UserIcon } from 'lucide-react'
 import { useMediaQuery } from 'react-responsive'
 import { DataList } from '~/components/data-list'
 import { SearchBar } from '~/components/search-bar'
+import { Badge } from '~/components/ui/badge'
 import { requireUserWithRoles } from '~/utils/auth.server'
 import { filterAndPaginate, prisma } from '~/utils/db.server'
 import { registrationWizard } from '~/utils/registration.server'
@@ -178,7 +179,34 @@ export default function IndexRoute() {
 						{
 							key: 'status',
 							header: 'Status',
-							render: (participant: any) => participant.status,
+							render: (participant: any) => {
+								let status = participant.status
+								if (
+									participant.status === 'REJECTED' &&
+									participant.step?.role?.name === 'first-validator'
+								) {
+									status = 'INPROGRESS'
+								}
+
+								const statusStyles = {
+									INPROGRESS:
+										'bg-orange-100 text-orange-800 hover:bg-orange-100/80',
+									REJECTED: 'bg-red-100 text-red-800 hover:bg-red-100/80',
+									PRINTED: 'bg-green-100 text-green-800 hover:bg-green-100/80',
+									APPROVED: 'bg-blue-100 text-blue-800 hover:bg-blue-100/80',
+								}
+								return (
+									<Badge
+										className={
+											statusStyles[
+												participant.status as keyof typeof statusStyles
+											] ?? ''
+										}
+									>
+										{participant.status}
+									</Badge>
+								)
+							},
 						},
 						// {
 						// 	key: 'step',
