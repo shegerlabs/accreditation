@@ -491,7 +491,7 @@ export async function action({ request }: ActionFunctionArgs) {
 			<RegistrationEmail
 				participantName={`${participant.firstName} ${participant.familyName}`}
 				registrationCode={registrationCode}
-				eventName={'African Union Summit Accreditation'}
+				eventName={'Accreditation for Pan-African Parliament Meetings'}
 				lookupUrl={lookupUrl}
 			/>,
 		),
