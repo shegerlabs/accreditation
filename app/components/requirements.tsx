@@ -68,11 +68,11 @@ export function Requirements() {
 						href="mailto:accreditation@mfa.gov.et"
 						className="text-primary hover:underline"
 					>
-						accreditation@mfa.gov.et
+						acerwc-secretariat@africanunion.org
 					</a>
 				</p>
 				<p className="text-sm text-muted-foreground">
-					Help desk: +251 11 518 2744 / +251 11 518 2745 / +251 11 518 2746
+					Help desk: +266 5605 9300
 				</p>
 			</InfoSection>
 		</Card>
