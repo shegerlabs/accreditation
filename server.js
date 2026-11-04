@@ -31,31 +31,36 @@ app.use(
 			directives: {
 				// Restrict resources to same origin by default
 				defaultSrc: ["'self'"],
-				// Allow inline scripts and eval for development needs
+				// SECURITY NOTE: 'unsafe-inline' and 'unsafe-eval' are required for:
+				// - Remix's runtime script injection for hydration
+				// - Vite's Hot Module Replacement (HMR) in development
+				// - React's client-side hydration process
+				// TODO: Consider implementing nonce-based CSP for stricter security
+				// See: https://remix.run/docs/en/main/guides/csp
 				scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
-				// Allow inline styles
+				// Inline styles required for Tailwind's dynamic class generation
 				styleSrc: ["'self'", "'unsafe-inline'"],
 				// Allow images from same origin, data URIs, and HTTPS sources
-				imgSrc: ["'self'", 'data:', 'https:'],
+				imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
 				// Restrict API requests to same origin
 				connectSrc:
 					process.env.NODE_ENV === 'production'
-						? ["'self'"]
-						: ["'self'", 'ws://localhost:*'], // Allow WebSocket in development only for vite's HMR
+						? ["'self'", 'data:', 'blob:']
+						: ["'self'", 'ws://localhost:*', 'data:', 'blob:'],
 				// Restrict fonts to same origin
 				fontSrc: ["'self'"],
 				// Prevent object/embed/applet tags
 				objectSrc: ["'none'"],
 				// Restrict media to same origin
 				mediaSrc: ["'self'"],
-				// Prevent iframe usage
-				frameSrc: ["'none'"],
+				// Update frame-src to allow blob URLs for PDF viewing
+				frameSrc: ["'self'", 'blob:'],
 				// Restrict base tag to same origin
 				baseUri: ["'self'"],
 				// Restrict form submissions to same origin
 				formAction: ["'self'"],
-				// Prevent site from being embedded in frames/iframes
-				frameAncestors: ["'none'"],
+				// Allow framing from same origin
+				frameAncestors: ["'self'"],
 			},
 		},
 		// Prevent browsers from including page in cross-origin embeddings
@@ -71,8 +76,8 @@ app.use(
 		},
 		// Control how much referrer information should be included
 		referrerPolicy: 'strict-origin-when-cross-origin',
-		// Prevent site from being embedded in frames (legacy header)
-		xFrameOptions: 'DENY',
+		// Set X-Frame-Options to SAMEORIGIN to allow framing from same origin
+		xFrameOptions: { action: 'sameorigin' },
 	}),
 )
 
@@ -122,7 +127,51 @@ if (viteDevServer) {
 // more aggressive with this caching.
 app.use(express.static('build/client', { maxAge: '1h' }))
 
-app.use(morgan('tiny'))
+// SECURITY: Custom morgan format that excludes sensitive endpoints from logging
+// This prevents OTP codes and reset tokens from appearing in logs
+const sensitivePathPatterns = [
+	'/verify',
+	'/reset-password',
+	'/forgot-password',
+	'/change-email',
+	'/two-factor',
+]
+
+app.use(
+	morgan((tokens, req, res) => {
+		// Skip logging for sensitive paths to prevent OTP/token leakage
+		const isSensitivePath = sensitivePathPatterns.some(pattern =>
+			req.path.includes(pattern),
+		)
+
+		if (isSensitivePath) {
+			// Log only method and status, not the full URL with query params
+			return [
+				tokens.method(req, res),
+				'[REDACTED-SENSITIVE-PATH]',
+				tokens.status(req, res),
+				tokens.res(req, res, 'content-length'),
+				'-',
+				tokens['response-time'](req, res),
+				'ms',
+			].join(' ')
+		}
+
+		// Standard tiny format for non-sensitive paths
+		return [
+			tokens.method(req, res),
+			tokens.url(req, res),
+			tokens.status(req, res),
+			tokens.res(req, res, 'content-length'),
+			'-',
+			tokens['response-time'](req, res),
+			'ms',
+		].join(' ')
+	}),
+)
+
+// Only skip rate limiting in test environment
+const isTestEnvironment = process.env.NODE_ENV === 'test'
 
 const rateLimitDefault = {
 	windowMs: 60 * 1000,
@@ -146,6 +195,11 @@ const strongRateLimit = rateLimit({
 const generalRateLimit = rateLimit(rateLimitDefault)
 
 app.use((req, res, next) => {
+	// Skip rate limiting only in test environment
+	if (isTestEnvironment) {
+		return next()
+	}
+
 	const strongPaths = [
 		'/signup',
 		'/login',

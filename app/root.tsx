@@ -66,8 +66,9 @@ import {
 } from './components/ui/alert-dialog'
 import { Card, CardContent, CardHeader, CardTitle } from './components/ui/card'
 import { Toaster } from './components/ui/sonner'
-import { getUser, getUserId } from './utils/auth.server'
+import { getImpersonationInfo, getUser, getUserId } from './utils/auth.server'
 import { sessionStorage } from './utils/session.server'
+import { getSetting, SettingKeys } from './utils/settings.server'
 import { useOptionalUser } from './utils/user'
 
 const ThemeFormSchema = z.object({
@@ -97,6 +98,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
 	)
 	const userId = await getUserId(request)
 	const user = userId ? await getUser(userId) : null
+	const inactivityTimeoutMinutes = await getSetting<number>(
+		SettingKeys.AUTH_INACTIVITY_TIMEOUT_MINUTES,
+	)
+	const isMaintenanceMode = await getSetting<boolean>(SettingKeys.MAINTENANCE_MODE_ENABLED)
+	const maintenanceMessage = isMaintenanceMode
+		? await getSetting<string>(SettingKeys.MAINTENANCE_MESSAGE)
+		: null
+	const impersonationInfo = await getImpersonationInfo(request)
 
 	if (userId && !user) {
 		// Something weird happened
@@ -153,6 +162,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
 			ENV: getEnv(),
 			honeypotProps,
 			csrfToken,
+			inactivityTimeoutMinutes,
+			isMaintenanceMode,
+			maintenanceMessage,
+			impersonationInfo,
 			menus: Array.from(menuMap.values()).sort((a, b) =>
 				a.title.localeCompare(b.title),
 			),
@@ -195,215 +208,130 @@ export default function App() {
 	const data = useLoaderData<typeof loader>()
 	const theme = useTheme()
 	const user = useOptionalUser()
+	const location = useLocation()
 	useToast(data.toast)
 
+	const authRoutes = ['/login', '/logout', '/signup', '/verify', '/reset-password', '/forgot-password']
+	const isAuthRoute = authRoutes.some(route => location.pathname.startsWith(route))
+	const showMaintenanceBanner = data.isMaintenanceMode && user && !isAuthRoute
+	const blockContent = data.isMaintenanceMode && user && !isAuthRoute
+
 	return (
-		<Document env={data.ENV} theme={theme} isLoggedIn={Boolean(user)}>
+		<Document
+			env={data.ENV}
+			theme={theme}
+			isLoggedIn={Boolean(user)}
+			inactivityTimeoutMinutes={data.inactivityTimeoutMinutes}
+		>
 			<AuthenticityTokenProvider token={data.csrfToken}>
 				<HoneypotProvider {...data.honeypotProps}>
-					<div
-						className={`grid min-h-screen w-full ${user ? 'md:grid-cols-[220px_1fr] lg:grid-cols-[280px_1fr]' : ''}`}
-					>
-						{user && (
-							<div className="hidden bg-muted/40 md:block">
-								<div className="flex h-full max-h-screen flex-col gap-2">
-									<div className="flex h-12 items-center border-b bg-primary">
-										<Link
-											to="/"
-											className="flex items-center font-semibold text-primary-foreground"
-										>
-											<img
-												src={logoAssetUrl}
-												alt="Logo"
-												className="h-16 w-16"
-											/>
-											<span className="text-sm">Accreditation</span>
-										</Link>
-									</div>
-									<div className="flex-1 overflow-auto py-2">
-										<nav className="grid gap-4 px-2 text-sm font-medium">
-											{data.menus.map((group, index) => (
-												<Card key={index}>
-													<CardHeader className="p-2">
-														<CardTitle className="text-xs">
-															{group.title}
-														</CardTitle>
-													</CardHeader>
-													<CardContent className="p-2 pt-0">
-														{group.items.map((item, itemIndex) => (
-															<NavLink
-																key={itemIndex}
-																to={`${item.link}`}
-																className={({ isActive }) =>
-																	isActive
-																		? 'flex items-center gap-3 rounded-lg bg-muted px-3 py-2 text-primary transition-all hover:text-primary'
-																		: 'flex items-center gap-3 rounded-lg px-3 py-2 text-muted-foreground transition-all hover:text-primary'
-																}
-															>
-																<Icon name={item.icon} className="h-4 w-4" />
-																{item.title}
-															</NavLink>
-														))}
-													</CardContent>
-												</Card>
-											))}
-										</nav>
-									</div>
-									<div className="mt-auto p-4">
-										<Card className="w-full">
-											<CardHeader className="p-2">
-												<CardTitle className="text-xs">Actions</CardTitle>
-											</CardHeader>
-											<CardContent className="grid grid-cols-2 gap-2 p-2 text-xs">
-												<NavLink
-													to="/settings/profile"
-													className="flex items-center gap-2 rounded-lg px-2 py-1 text-muted-foreground transition-all hover:text-primary"
-												>
-													<Icon name="person" className="h-3 w-3" />
-													Profile
-												</NavLink>
-												<NavLink
-													to="#"
-													className="flex items-center gap-2 rounded-lg px-2 py-1 text-muted-foreground transition-all hover:text-primary"
-												>
-													<Icon name="shield" className="h-3 w-3" />
-													Support
-												</NavLink>
-												<NavLink
-													to="/faq"
-													className="flex items-center gap-2 rounded-lg px-2 py-1 text-muted-foreground transition-all hover:text-primary"
-												>
-													<Icon name="help-circle" className="h-3 w-3" />
-													FAQ
-												</NavLink>
-												<Form action="/logout" method="POST">
-													<AuthenticityTokenInput />
-													<button
-														type="submit"
-														className="flex w-full items-center gap-2 rounded-lg px-2 py-1 text-muted-foreground transition-all hover:text-primary"
-													>
-														<Icon name="logout" className="h-3 w-3" />
-														Log Out
-													</button>
-												</Form>
-											</CardContent>
-										</Card>
-									</div>
-								</div>
+					<div className="flex min-h-screen w-full flex-col">
+						{showMaintenanceBanner && (
+							<div className="bg-yellow-400 px-4 py-2 text-center text-sm font-medium text-yellow-900">
+								{data.maintenanceMessage}
 							</div>
 						)}
-						<div className="flex h-screen flex-col">
-							<header className="flex h-12 items-center gap-4 border-b bg-primary px-4">
-								{user ? (
-									<Sheet>
-										<SheetTrigger asChild>
-											<Button
-												variant="outline"
-												size="icon"
-												className="shrink-0 bg-primary-foreground text-primary md:hidden"
-											>
-												<Icon name="menu" className="h-4 w-4" />
-												<span className="sr-only">Toggle navigation menu</span>
-											</Button>
-										</SheetTrigger>
-										<SheetContent side="left" className="flex flex-col">
-											<nav className="grid gap-2 text-sm font-medium">
-												<Link
-													to="#"
-													className="flex items-center gap-2 text-sm font-semibold"
-												>
-													<Icon name="package2" className="h-5 w-5" />
-													<span className="">Accreditation</span>
-												</Link>
-
-												{data.menus.map((group, index) => (
-													<Card key={index}>
-														<CardHeader className="p-2">
-															<CardTitle className="text-xs">
-																{group.title}
-															</CardTitle>
-														</CardHeader>
-														<CardContent className="p-2 pt-0">
-															{group.items.map((item, itemIndex) => (
-																<NavLink
-																	key={itemIndex}
-																	to={`${item.link}`}
-																	className={({ isActive }) =>
-																		isActive
-																			? 'flex items-center gap-3 rounded-lg bg-muted px-3 py-2 text-primary transition-all hover:text-primary'
-																			: 'flex items-center gap-3 rounded-lg px-3 py-2 text-muted-foreground transition-all hover:text-primary'
-																	}
-																>
-																	<Icon name={item.icon} className="h-4 w-4" />
-																	{item.title}
-																</NavLink>
-															))}
-														</CardContent>
-													</Card>
-												))}
-											</nav>
-
-											<div className="mt-auto">
-												<Card className="w-full">
-													<CardHeader className="p-2">
-														<CardTitle className="text-xs">Actions</CardTitle>
-													</CardHeader>
-													<CardContent className="grid grid-cols-2 gap-2 p-2 text-xs">
-														<NavLink
-															to="/settings/profile"
-															className="flex items-center gap-2 rounded-lg px-2 py-1 text-muted-foreground transition-all hover:text-foreground"
-														>
-															<Icon name="settings" className="h-3 w-3" />
-															Profile
-														</NavLink>
-														<NavLink
-															to="#"
-															className="flex items-center gap-2 rounded-lg px-2 py-1 text-muted-foreground transition-all hover:text-foreground"
-														>
-															<Icon name="shield" className="h-3 w-3" />
-															Support
-														</NavLink>
-														<NavLink
-															to="/faq"
-															className="flex items-center gap-2 rounded-lg px-2 py-1 text-muted-foreground transition-all hover:text-foreground"
-														>
-															<Icon name="help-circle" className="h-3 w-3" />
-															FAQ
-														</NavLink>
-														<Form action="/logout" method="POST">
-															<AuthenticityTokenInput />
-															<button
-																type="submit"
-																className="flex w-full items-center gap-2 rounded-lg px-2 py-1 text-muted-foreground transition-all hover:text-foreground"
-															>
-																<Icon name="logout" className="h-3 w-3" />
-																Log Out
-															</button>
-														</Form>
-													</CardContent>
-												</Card>
-											</div>
-										</SheetContent>
-									</Sheet>
-								) : (
+						{data.impersonationInfo?.isImpersonating && (
+							<ImpersonationBanner
+								userName={data.user?.name}
+								adminName={data.impersonationInfo.impersonatedByName}
+							/>
+						)}
+						<header className="sticky top-0 z-50 flex h-12 shrink-0 items-center gap-4 border-b bg-primary px-2">
+							{user ? (
+								<>
 									<Link
 										to="/"
 										className="flex items-center gap-2 font-semibold text-primary-foreground"
 									>
 										<img src={logoAssetUrl} alt="Logo" className="h-16 w-16" />
-										<span className="text-sm">Accreditation</span>
+										<span className="hidden text-sm sm:inline-block">
+											Accreditation
+										</span>
 									</Link>
-								)}
-								<div className="flex-1"></div>
-
+									{!blockContent && (
+										<>
+											<nav className="hidden flex-1 items-center gap-1 md:flex">
+												{data.menus.map(group =>
+													group.items.map(item => (
+														<NavLink
+															key={item.id}
+															to={item.link}
+															className={({ isActive }) =>
+																`flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+																	isActive
+																		? 'bg-primary-foreground/10 text-primary-foreground'
+																		: 'text-primary-foreground/70 hover:bg-primary-foreground/10 hover:text-primary-foreground'
+																}`
+															}
+														>
+															<Icon name={item.icon} className="h-4 w-4" />
+															<span>{item.title}</span>
+														</NavLink>
+													)),
+												)}
+											</nav>
+											<Sheet>
+												<SheetTrigger asChild>
+													<Button
+														variant="ghost"
+														size="icon"
+														className="text-primary-foreground hover:bg-primary-foreground/10 md:hidden"
+													>
+														<Icon name="menu" className="h-5 w-5" />
+														<span className="sr-only">Toggle navigation menu</span>
+													</Button>
+												</SheetTrigger>
+												<SheetContent side="left" className="flex flex-col">
+													<nav className="grid gap-2 text-sm font-medium">
+														<Link
+															to="/"
+															className="mb-4 flex items-center gap-2 text-sm font-semibold"
+														>
+															<img src={logoAssetUrl} alt="Logo" className="h-16 w-16" />
+															<span>Accreditation</span>
+														</Link>
+														{data.menus.map(group =>
+															group.items.map(item => (
+																<NavLink
+																	key={item.id}
+																	to={item.link}
+																	className={({ isActive }) =>
+																		`flex items-center gap-3 rounded-lg px-3 py-2 transition-colors ${
+																			isActive
+																				? 'bg-muted text-primary'
+																				: 'text-muted-foreground hover:bg-muted hover:text-primary'
+																		}`
+																	}
+																>
+																	<Icon name={item.icon} className="h-4 w-4" />
+																	{item.title}
+																</NavLink>
+															)),
+														)}
+													</nav>
+												</SheetContent>
+											</Sheet>
+										</>
+									)}
+								</>
+							) : (
+								<Link
+									to="/"
+									className="flex items-center gap-2 font-semibold text-primary-foreground"
+								>
+									<img src={logoAssetUrl} alt="Logo" className="h-16 w-16" />
+									<span className="text-sm">Accreditation</span>
+								</Link>
+							)}
+							<div className="ml-auto flex items-center gap-2">
 								<ThemeSwitch userPreference={theme} />
-
 								{user ? (
-									<div className="flex items-center space-x-2">
+									<>
 										<Button
 											variant="ghost"
 											size="sm"
-											className="h-8 px-2 text-primary-foreground hover:bg-transparent hover:text-primary-foreground"
+											className="h-8 px-2 text-primary-foreground hover:bg-primary-foreground/10"
 										>
 											<Icon name="bell" className="h-4 w-4" />
 											<span className="sr-only">Toggle notifications</span>
@@ -413,51 +341,71 @@ export default function App() {
 												<Button
 													variant="ghost"
 													size="sm"
-													className="h-8 text-primary-foreground hover:bg-transparent hover:text-primary-foreground"
+													className="h-8 text-primary-foreground hover:bg-primary-foreground/10"
 												>
 													<Icon name="circle-user" className="mr-2 h-4 w-4" />
-													<span className="hidden text-sm font-medium md:inline-block">
+													<span className="hidden text-sm font-medium sm:inline-block">
 														{user.name}
 													</span>
 													<Icon name="chevron-down" className="ml-2 h-4 w-4" />
 												</Button>
 											</DropdownMenuTrigger>
 											<DropdownMenuContent align="end">
-												{/* <DropdownMenuItem>
-													<Icon name="settings" className="mr-2 h-4 w-4" />
-													<span>Settings</span>
-												</DropdownMenuItem> */}
-												{/* <DropdownMenuItem>
-													<Icon name="help-circle" className="mr-2 h-4 w-4" />
-													<span>Support</span>
-												</DropdownMenuItem> */}
+												<DropdownMenuItem asChild>
+													<NavLink
+														to="/settings/profile"
+														className="flex items-center"
+													>
+														<Icon name="person" className="mr-2 h-4 w-4" />
+														Profile
+													</NavLink>
+												</DropdownMenuItem>
+												<DropdownMenuItem asChild>
+													<NavLink to="#" className="flex items-center">
+														<Icon name="shield" className="mr-2 h-4 w-4" />
+														Support
+													</NavLink>
+												</DropdownMenuItem>
+												<DropdownMenuItem asChild>
+													<NavLink to="/faq" className="flex items-center">
+														<Icon name="help-circle" className="mr-2 h-4 w-4" />
+														FAQ
+													</NavLink>
+												</DropdownMenuItem>
 												<DropdownMenuSeparator />
 												<DropdownMenuItem>
-													<Icon name="logout" className="mr-2 h-4 w-4" />
-													<Form action="/logout" method="POST">
+													<Form
+														action="/logout"
+														method="POST"
+														className="w-full"
+													>
 														<AuthenticityTokenInput />
-														<Button size="xs" type="submit" variant="ghost">
+														<button
+															type="submit"
+															className="flex w-full items-center"
+														>
+															<Icon name="logout" className="mr-2 h-4 w-4" />
 															Logout
-														</Button>
+														</button>
 													</Form>
 												</DropdownMenuItem>
 											</DropdownMenuContent>
 										</DropdownMenu>
-									</div>
+									</>
 								) : (
 									<NavLink
-										className="ml-4 text-sm font-medium text-primary-foreground hover:text-primary-foreground"
+										className="text-sm font-medium text-primary-foreground hover:text-primary-foreground/80"
 										to="/login"
 									>
-										<span>Login</span>
+										Login
 									</NavLink>
 								)}
-							</header>
-							<main className="flex-1 overflow-auto border-l p-4">
-								<Outlet />
-								<Toaster position="top-right" theme={theme} />
-							</main>
-						</div>
+							</div>
+						</header>
+						<main className="flex-1 overflow-y-auto p-4">
+							{blockContent ? null : <Outlet />}
+							<Toaster position="top-right" theme={theme} />
+						</main>
 					</div>
 				</HoneypotProvider>
 			</AuthenticityTokenProvider>
@@ -470,11 +418,13 @@ function Document({
 	theme,
 	env = {},
 	isLoggedIn,
+	inactivityTimeoutMinutes = 60,
 }: {
 	children: React.ReactNode
 	theme?: Theme
 	env?: Record<string, string>
 	isLoggedIn?: boolean
+	inactivityTimeoutMinutes?: number
 }) {
 	return (
 		<html lang="en" className={theme}>
@@ -491,7 +441,9 @@ function Document({
 						__html: `window.ENV = ${JSON.stringify(env)}`,
 					}}
 				/>
-				{isLoggedIn && <LogoutTimer />}
+				{isLoggedIn && (
+					<LogoutTimer inactivityTimeoutMinutes={inactivityTimeoutMinutes} />
+				)}
 				<ScrollRestoration
 					getKey={location => {
 						return location.pathname
@@ -561,18 +513,18 @@ function ThemeSwitch({ userPreference }: { userPreference?: Theme }) {
 	)
 }
 
-function LogoutTimer() {
+function LogoutTimer({
+	inactivityTimeoutMinutes,
+}: {
+	inactivityTimeoutMinutes: number
+}) {
 	const [status, setStatus] = useState<'idle' | 'show-modal'>('idle')
 	const location = useLocation()
 	const submit = useSubmit()
-	// 🦉 normally you'd want these numbers to be much higher, but for the purpose
-	// of this exercise, we'll make it short:
-	// const logoutTime = 5000
-	// const modalTime = 2000
 
-	// 🦉 here's what would be more likely:
-	const logoutTime = 1000 * 60 * 60 // 1 hour
-	const modalTime = logoutTime - 1000 * 60 * 2 // 58 minutes
+	// Use configurable timeout from settings
+	const logoutTime = 1000 * 60 * inactivityTimeoutMinutes
+	const modalTime = logoutTime - 1000 * 60 * 2 // Show modal 2 minutes before logout
 	const modalTimer = useRef<ReturnType<typeof setTimeout>>()
 	const logoutTimer = useRef<ReturnType<typeof setTimeout>>()
 	const [timeLeft, setTimeLeft] = useState<number>(0) // New state for time left
@@ -648,6 +600,41 @@ function LogoutTimer() {
 				</AlertDialogFooter>
 			</AlertDialogContent>
 		</AlertDialog>
+	)
+}
+
+function ImpersonationBanner({
+	userName,
+	adminName,
+}: {
+	userName?: string | null
+	adminName?: string | null
+}) {
+	return (
+		<div className="bg-amber-500 px-4 py-2 text-center text-sm font-medium text-amber-950">
+			<div className="flex items-center justify-center gap-4">
+				<span>
+					<Icon name="person" className="mr-2 inline h-4 w-4" />
+					Viewing as <strong>{userName || 'User'}</strong>
+					{adminName && (
+						<span className="ml-1 text-amber-800">
+							(initiated by {adminName})
+						</span>
+					)}
+				</span>
+				<Form method="POST" action="/stop-impersonating" className="inline">
+					<Button
+						type="submit"
+						variant="outline"
+						size="sm"
+						className="h-7 border-amber-700 bg-amber-600 text-amber-950 hover:bg-amber-400"
+					>
+						<Icon name="logout" className="mr-1 h-3 w-3" />
+						Stop Impersonating
+					</Button>
+				</Form>
+			</div>
+		</div>
 	)
 }
 

@@ -14,73 +14,20 @@ import {
 	CardTitle,
 } from '~/components/ui/card'
 
-// const invitations = await prisma.invitation.groupBy({
-// 	by: ['eventId'], // Grouping by eventId
-// 	where: {
-// 		email: user.email,
-// 	},
-// 	_count: {
-// 		id: true, // Example: Count of invitation IDs
-// 	},
-// })
+// =============================================================================
+// TYPE DEFINITIONS
+// =============================================================================
 
-// // Fetching detailed data with event name
-// const detailedData = await Promise.all(
-// 	invitations.map(async group => {
-// 		const relatedInvitations = await prisma.invitation.findMany({
-// 			where: {
-// 				eventId: group.eventId,
-// 				email: user.email,
-// 			},
-// 			include: {
-// 				participantType: true,
-// 				participants: {
-// 					include: {
-// 						participantType: true,
-// 					},
-// 				},
-// 				restriction: {
-// 					include: {
-// 						constraints: {
-// 							include: {
-// 								participantType: {
-// 									include: {
-// 										participants: true,
-// 									},
-// 								},
-// 							},
-// 						},
-// 					},
-// 				},
-// 			},
-// 			orderBy: {
-// 				participants: {
-// 					_count: 'desc',
-// 				},
-// 			},
-// 		})
-
-// 		// Fetch the event name
-// 		const event = await prisma.event.findUnique({
-// 			where: { id: group.eventId },
-// 			select: { name: true }, // Only fetching the event name
-// 		})
-
-// 		return {
-// 			eventId: group.eventId,
-// 			eventName: event?.name ?? 'Unknown Event', // Include event name
-// 			invitations: relatedInvitations,
-// 		}
-// 	}),
-// )
-
-interface Constraint {
-	name: string
+interface InvitationConstraint {
+	id: string
+	participantTypeId: string
 	accessLevel: string
-	quota: number
+	quota: number | null
 	participantType: {
+		id: string
 		name: string
 	}
+	participantCount: number
 }
 
 interface Participant {
@@ -97,14 +44,8 @@ interface Participant {
 interface Invitation {
 	organization: string
 	email: string
-	participantType: {
-		name: string
-	}
 	participants: Participant[]
-	restriction: {
-		name: string
-		constraints: Constraint[]
-	}
+	invitationConstraints: InvitationConstraint[]
 }
 
 interface EventData {
@@ -113,16 +54,9 @@ interface EventData {
 	invitations: Invitation[]
 }
 
-const formatDate = (date: Date) => {
-	return new Intl.DateTimeFormat('en-US', {
-		year: 'numeric',
-		month: 'long',
-		day: 'numeric',
-		hour: '2-digit',
-		minute: '2-digit',
-		timeZoneName: 'short',
-	}).format(date)
-}
+// =============================================================================
+// COMPONENTS
+// =============================================================================
 
 const ParticipantCard: React.FC<{ participant: Participant }> = ({
 	participant,
@@ -148,18 +82,18 @@ const ParticipantCard: React.FC<{ participant: Participant }> = ({
 	</Card>
 )
 
-const ConstraintItem: React.FC<{ constraint: Constraint }> = ({
+const InvitationConstraintItem: React.FC<{ constraint: InvitationConstraint }> = ({
 	constraint,
 }) => (
 	<div className="mb-2">
 		<p>
-			<strong>{constraint.name}</strong>
+			<strong>{constraint.participantType.name}</strong>
 		</p>
 		<p>
 			Access Level: <Badge>{constraint.accessLevel}</Badge>
 		</p>
-		<p>Quota: {constraint.quota}</p>
-		<p>Participant Type: {constraint.participantType.name}</p>
+		<p>Quota: {constraint.quota === null ? 'Unlimited' : constraint.quota}</p>
+		<p>Registered: {constraint.participantCount}</p>
 	</div>
 )
 
@@ -171,9 +105,6 @@ const InvitationCard: React.FC<{ invitation: Invitation }> = ({
 			<CardTitle>{invitation.organization}</CardTitle>
 		</CardHeader>
 		<CardContent>
-			<p>
-				<strong>Participant Type:</strong> {invitation.participantType.name}
-			</p>
 			<Accordion type="single" collapsible className="w-full">
 				<AccordionItem value="participants">
 					<AccordionTrigger>
@@ -185,28 +116,18 @@ const InvitationCard: React.FC<{ invitation: Invitation }> = ({
 						))}
 					</AccordionContent>
 				</AccordionItem>
-				<AccordionItem value="restrictions">
-					<AccordionTrigger>Restrictions</AccordionTrigger>
-					<AccordionContent>
-						<p>
-							<strong>{invitation.restriction.name}</strong>
-						</p>
-						<Accordion type="single" collapsible className="w-full">
-							<AccordionItem value="constraints">
-								<AccordionTrigger>
-									Constraints ({invitation.restriction.constraints.length})
-								</AccordionTrigger>
-								<AccordionContent>
-									{invitation.restriction.constraints.map(
-										(constraint, index) => (
-											<ConstraintItem key={index} constraint={constraint} />
-										),
-									)}
-								</AccordionContent>
-							</AccordionItem>
-						</Accordion>
-					</AccordionContent>
-				</AccordionItem>
+				{invitation.invitationConstraints.length > 0 && (
+					<AccordionItem value="constraints">
+						<AccordionTrigger>
+							Quotas ({invitation.invitationConstraints.length})
+						</AccordionTrigger>
+						<AccordionContent>
+							{invitation.invitationConstraints.map((constraint, index) => (
+								<InvitationConstraintItem key={index} constraint={constraint} />
+							))}
+						</AccordionContent>
+					</AccordionItem>
+				)}
 			</Accordion>
 		</CardContent>
 	</Card>

@@ -57,11 +57,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
 						})),
 					}
 				: undefined,
+		take: 10000, // Safety limit to prevent OOM for large exports
 		orderBy: {
 			firstName: 'asc',
 		},
 		select: {
-			title: true,
+			title: {
+				select: { name: true },
+			},
 			firstName: true,
 			familyName: true,
 			gender: true,
@@ -93,7 +96,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 			'No.': index + 1,
 			Country: participant.nationality?.name ?? 'Unknown',
 			Organization: participant.organization ?? 'Unknown',
-			Title: participant.title,
+			Title: participant.title?.name ?? 'Unknown',
 			'First Name': participant.firstName,
 			'Family Name': participant.familyName,
 			'Job Title': participant.jobTitle ?? 'Unknown',

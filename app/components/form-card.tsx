@@ -32,6 +32,7 @@ type FormCardProps = {
 		| 'application/x-www-form-urlencoded'
 		| 'multipart/form-data'
 		| 'text/plain'
+	bordered?: boolean
 }
 
 export function FormCard({
@@ -42,12 +43,13 @@ export function FormCard({
 	buttons,
 	children,
 	encType,
+	bordered = true,
 }: FormCardProps) {
 	return (
-		<Card className="mx-auto w-full">
+		<Card className={`mx-auto w-full ${bordered ? '' : 'border-none shadow-none'}`}>
 			{title && (
 				<CardHeader>
-					<CardTitle className="mb-4pb-2 text-base font-semibold leading-6 text-gray-500">
+					<CardTitle className="mb-4 pb-2 text-base font-semibold leading-6 text-gray-500">
 						{title}
 					</CardTitle>
 					{description && (

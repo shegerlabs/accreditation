@@ -1,13 +1,28 @@
 import { EmailClient, KnownEmailSendStatus } from '@azure/communication-email'
 import { getErrorMessage } from './misc'
+import { getSetting, SettingKeys } from './settings.server'
 
+/**
+ * @deprecated Use sendEmailAzure instead. This function uses the Resend API
+ * which requires RESEND_API_KEY environment variable. It is kept for reference
+ * but sendEmailAzure (Azure Communication Services) is the recommended method.
+ */
 export async function sendEmail(options: {
 	to: string
 	subject: string
 	text: string
 	html?: string
 }) {
-	// eslint-disable-next-line @typescript-eslint/no-unused-vars
+	console.warn(
+		'[Deprecated] sendEmail() is deprecated. Use sendEmailAzure() instead.',
+	)
+
+	// Validate RESEND_API_KEY before making request
+	if (!process.env.RESEND_API_KEY) {
+		console.error('[Email] RESEND_API_KEY is not configured')
+		return { status: 'error', error: 'Email service not configured' } as const
+	}
+
 	const email = {
 		from: 'noreply@accreditation.com',
 		...options,
@@ -39,8 +54,15 @@ export async function sendEmailAzure(options: {
 }) {
 	const { to, subject, plainText, html } = options
 	const POLLER_WAIT_TIME = 10
+
+	// Fetch email settings from database
+	const [senderAddress, sendTimeoutSeconds] = await Promise.all([
+		getSetting<string>(SettingKeys.EMAIL_SENDER_ADDRESS),
+		getSetting<number>(SettingKeys.EMAIL_SEND_TIMEOUT_SECONDS),
+	])
+
 	const message = {
-		senderAddress: 'DoNotReply@accreditation.africanunion.org',
+		senderAddress,
 		recipients: {
 			to: [{ address: to }],
 		},
@@ -64,9 +86,9 @@ export async function sendEmailAzure(options: {
 			poller.poll()
 
 			await new Promise(resolve => setTimeout(resolve, POLLER_WAIT_TIME * 1000))
-			timeElapsed += 10
+			timeElapsed += POLLER_WAIT_TIME
 
-			if (timeElapsed > 18 * POLLER_WAIT_TIME) {
+			if (timeElapsed > sendTimeoutSeconds) {
 				throw 'Polling timed out.'
 			}
 		}

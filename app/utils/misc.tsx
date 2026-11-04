@@ -22,13 +22,55 @@ export function getErrorMessage(error: unknown) {
 	return 'Unknown Error'
 }
 
+/**
+ * Check if a domain is in the allowed list.
+ * If no allowlist is configured, allows all domains (but logs warning in production).
+ */
+function isAllowedDomain(domain: string): boolean {
+	const allowedDomains =
+		process.env.ALLOWED_DOMAINS?.split(',').map(d => d.trim().toLowerCase()) ||
+		[]
+
+	// If no allowlist configured, allow all (but log warning in production)
+	if (allowedDomains.length === 0) {
+		if (process.env.NODE_ENV === 'production') {
+			console.warn(
+				'[Security] ALLOWED_DOMAINS not configured. Consider setting this for production.',
+			)
+		}
+		return true
+	}
+
+	const normalizedDomain = domain.toLowerCase().split(':')[0] // Remove port if present
+	return allowedDomains.includes(normalizedDomain)
+}
+
+/**
+ * Get the domain URL for the current request.
+ *
+ * SECURITY: This function validates X-Forwarded headers against an allowlist
+ * to prevent host header injection attacks in password reset emails.
+ */
 export function getDomainUrl(request: Request) {
-	const host =
-		request.headers.get('X-Forwarded-Host') ??
-		request.headers.get('host') ??
-		new URL(request.url).host
+	const forwardedHost = request.headers.get('X-Forwarded-Host')
+	const host = request.headers.get('host') ?? new URL(request.url).host
 	const protocol = request.headers.get('X-Forwarded-Proto') ?? 'http'
-	return `${protocol}://${host}`
+
+	// Use forwarded host only if it passes validation
+	const finalHost =
+		forwardedHost && isAllowedDomain(forwardedHost) ? forwardedHost : host
+
+	// Validate the final host as well
+	if (!isAllowedDomain(finalHost)) {
+		console.warn(`[Security] Blocked request with invalid host: ${finalHost}`)
+		// Fall back to first allowed domain if configured
+		const allowedDomains = process.env.ALLOWED_DOMAINS?.split(',') || []
+		if (allowedDomains.length > 0) {
+			return `${protocol}://${allowedDomains[0].trim()}`
+		}
+	}
+
+	return `${protocol}://${finalHost}`
 }
 
 export function getReferrerRoute(request: Request) {

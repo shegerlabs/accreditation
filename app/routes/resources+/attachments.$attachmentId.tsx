@@ -1,11 +1,15 @@
 import { type LoaderFunctionArgs } from '@remix-run/node'
 import createDOMPurify from 'dompurify'
 import { JSDOM } from 'jsdom'
+import { requireUserId } from '~/utils/auth.server'
 import { prisma } from '~/utils/db.server'
 import { invariantResponse } from '~/utils/misc'
 import { getFile } from '~/utils/storage.server'
 
-export async function loader({ params }: LoaderFunctionArgs) {
+export async function loader({ params, request }: LoaderFunctionArgs) {
+	// Require authentication to access attachments
+	await requireUserId(request)
+
 	const { attachmentId } = params
 	invariantResponse(attachmentId, 'Attachment ID is required', { status: 400 })
 
@@ -16,10 +20,26 @@ export async function loader({ params }: LoaderFunctionArgs) {
 			contentType: true,
 			extension: true,
 			fileName: true,
+			template: {
+				select: {
+					event: {
+						select: {
+							status: true,
+						},
+					},
+				},
+			},
 		},
 	})
 
 	invariantResponse(attachment, 'Attachment not found', { status: 404 })
+
+	// Only allow access to attachments for published events
+	invariantResponse(
+		attachment.template.event.status === 'PUBLISHED',
+		'Event is not available',
+		{ status: 403 },
+	)
 
 	const safeContentTypes = [
 		'application/pdf',

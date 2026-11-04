@@ -55,16 +55,16 @@ enum Action {
   REJECT
   NOTIFY
   PRINT
+  COLLECT
   ARCHIVE
   CANCEL
   BYPASS
+  REPRINT
 }
 
 enum AccessLevel {
-  FREE
   OPEN
   CLOSED
-  ALL
 }
 
 enum ApprovalResult {
@@ -80,6 +80,7 @@ enum RequestStatus {
   REJECTED
   CANCELLED
   PRINTED
+  COLLECTED
   NOTIFIED
   ARCHIVED
   BYPASSED
@@ -92,18 +93,37 @@ enum DocumentType {
   OTHER
 }
 
+enum BadgeElementType {
+  PHOTO
+  QR_CODE
+  TEXT
+  DYNAMIC_TEXT
+  IMAGE
+  SHAPE
+}
+
 enum AuditAction {
   CREATE
   UPDATE
   DELETE
   LOGIN
+  LOGIN_FAILED
   LOGOUT
+  PASSWORD_RESET
+  PASSWORD_CHANGE
+  TWO_FACTOR_ENABLE
+  TWO_FACTOR_DISABLE
+  SESSION_REVOKE
   APPROVE
   REJECT
   EXPORT
   IMPORT
   PRINT
+  COLLECT
   BYPASS
+  REPRINT
+  IMPERSONATE
+  IMPERSONATE_END
   OTHER
 }
 
@@ -115,15 +135,44 @@ enum AuditEntityType {
   MENU
   MENU_ITEM
   PARTICIPANT
+  PARTICIPANT_TYPE
   EVENT
   MEETING
+  MEETING_TYPE
   VENUE
   WORKFLOW
   STEP
+  STEP_TEMPLATE
   INVITATION
+  INVITATION_CONSTRAINT
   TEMPLATE
+  BADGE_TEMPLATE
+  RESTRICTION
+  RESTRICTION_CONSTRAINT
+  COUNTRY
+  TITLE
+  SESSION
   SYSTEM
+  BACKUP
   OTHER
+}
+
+enum BackupStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+}
+
+enum BackupType {
+  MANUAL
+  PRE_RESTORE
+}
+
+enum RoleScope {
+  GLOBAL // Global admin - sees all tenants
+  TENANT // Tenant admin - manages own tenant
+  EVENT  // Event roles - per-event/step access
 }
 
 model Tenant {
@@ -151,12 +200,15 @@ model Tenant {
   meetings         Meeting[]
   restrictions     Restriction[]
   constraints      Constraint[]
-  workflows        Workflow[]
-  steps            Step[]
-  invitations      Invitation[]
+  workflows         Workflow[]
+  workflowTemplates WorkflowTemplate[]
+  steps             Step[]
+  invitations       Invitation[]
   participants     Participant[]
   templates        Template[]
   auditLogs        AuditLog[]
+  badgeTemplates   BadgeTemplate[]
+  customReports    CustomReport[]
 
   @@index([name, email])
 }
@@ -181,10 +233,13 @@ model User {
   tenant              Tenant?    @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   roles               Role[]
 
-  sessions     Session[]
-  approvals    Approval[]
-  participants Participant[]
-  auditLogs    AuditLog[]
+  sessions        Session[]
+  approvals       Approval[]
+  participants    Participant[]
+  auditLogs       AuditLog[]
+  eventAccess     UserEventAccess[]
+  backups         DatabaseBackup[]
+  customReports   CustomReport[]
 }
 
 model UserImage {
@@ -232,16 +287,19 @@ model Verification {
 }
 
 model Role {
-  id          String       @id @default(cuid())
-  name        String       @unique
-  description String?
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  permissions Permission[]
-  users       User[]
-  menus       Menu[]
-  menuItems   MenuItem[]
-  steps       Step[]
+  id            String            @id @default(cuid())
+  name          String            @unique
+  scope         RoleScope         @default(EVENT)
+  description   String?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  permissions   Permission[]
+  users         User[]
+  menus         Menu[]
+  menuItems     MenuItem[]
+  steps         Step[]
+  stepTemplates StepTemplate[]
+  eventAccess   UserEventAccess[]
 }
 
 model Permission {
@@ -279,7 +337,7 @@ model MenuItem {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([menuId, name])
+  @@unique([menuId, name, link])
 }
 
 model Venue {
@@ -316,6 +374,8 @@ model Template {
   event             Event           @relation(fields: [eventId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   participantTypeId String
   participantType   ParticipantType @relation(fields: [participantTypeId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  badgeTemplateId   String?
+  badgeTemplate     BadgeTemplate?  @relation(fields: [badgeTemplateId], references: [id], onDelete: SetNull, onUpdate: Cascade)
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
   attachments       Attachment[]
@@ -348,6 +408,7 @@ model Event {
   endDate     DateTime
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
+  deletedAt   DateTime?
 
   meetings     Meeting[]
   restrictions Restriction[]
@@ -355,11 +416,13 @@ model Event {
   invitations  Invitation[]
   participants Participant[]
   templates    Template[]
+  userAccess   UserEventAccess[]
 
   @@unique([tenantId, name])
   @@unique([tenantId, name, startDate, endDate])
   @@index([tenantId, name])
   @@index([tenantId, status])
+  @@index([deletedAt])
 }
 
 model Country {
@@ -370,6 +433,14 @@ model Country {
   updatedAt                DateTime      @updatedAt
   participantNationalities Participant[] @relation("Nationality")
   participantCountries     Participant[] @relation("Country")
+}
+
+model Title {
+  id           String        @id @default(cuid())
+  name         String        @unique
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  participants Participant[]
 }
 
 model MeetingType {
@@ -386,24 +457,23 @@ model MeetingType {
 }
 
 model ParticipantType {
-  id                               String        @id @default(cuid())
+  id                               String                 @id @default(cuid())
   tenantId                         String
-  tenant                           Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  tenant                           Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   name                             String
   description                      String
   priority                         Priority
-  canSendPrivateRequest            Boolean
-  canSendAnonymousRequest          Boolean
   isExemptedFromFullQuota          Boolean
   isExemptedFromOpenSessionQuota   Boolean
   isExemptedFromClosedSessionQuota Boolean
-  createdAt                        DateTime      @default(now())
-  updatedAt                        DateTime      @updatedAt
+  createdAt                        DateTime               @default(now())
+  updatedAt                        DateTime               @updatedAt
   constraints                      Constraint[]
   workflows                        Workflow[]
   invitations                      Invitation[]
   participants                     Participant[]
   templates                        Template[]
+  invitationConstraints            InvitationConstraint[]
 
   @@unique([tenantId, name])
 }
@@ -428,16 +498,17 @@ model Meeting {
 }
 
 model Restriction {
-  id          String       @id @default(cuid())
-  tenantId    String
-  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  eventId     String
-  event       Event        @relation(fields: [eventId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  name        String
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  constraints Constraint[]
-  invitations Invitation[]
+  id                    String                 @id @default(cuid())
+  tenantId              String
+  tenant                Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  eventId               String
+  event                 Event                  @relation(fields: [eventId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  name                  String
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  constraints           Constraint[]
+  invitations           Invitation[]
+  invitationConstraints InvitationConstraint[]
 
   @@unique([tenantId, eventId, name])
   @@index([eventId, name])
@@ -476,6 +547,7 @@ model Workflow {
 
   @@unique([tenantId, eventId, participantTypeId, name])
   @@index([eventId, participantTypeId])
+  @@index([tenantId])
 }
 
 model Step {
@@ -490,34 +562,118 @@ model Step {
   roleId     String
   role       Role     @relation(fields: [roleId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
-  nextStepId String?
+  nextStepId        String?
+  isRejectionTarget Boolean  @default(false) // Where rejected participants return
+  isBypassTarget     Boolean  @default(false) // Where bypassed participants jump to
+  requiresAssignment Boolean  @default(true)  // Whether step requires user assignment
+  slaDurationMinutes Int?     // SLA duration in minutes, null = no SLA
+  positionX          Float?   // Visual builder X position
+  positionY         Float?   // Visual builder Y position
 
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
   participants Participant[]
   approvals    Approval[]
+  userAccess   UserEventAccess[]
 
   @@unique([tenantId, workflowId, roleId, action, name])
+  @@index([workflowId, action])
+  @@index([workflowId, isBypassTarget])
+  @@index([workflowId, isRejectionTarget])
+}
+
+model UserEventAccess {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  eventId   String
+  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  roleId    String
+  role      Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  stepId    String?
+  step      Step?    @relation(fields: [stepId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, eventId, roleId, stepId])
+  @@index([userId])
+  @@index([eventId])
+  @@index([stepId])
+}
+
+model WorkflowTemplate {
+  id          String         @id @default(cuid())
+  name        String
+  description String?
+  tenantId    String
+  tenant      Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  steps       StepTemplate[]
+
+  @@unique([tenantId, name])
+}
+
+model StepTemplate {
+  id                 String           @id @default(cuid())
+  name               String
+  action             Action
+  order              Int
+  roleId             String
+  role               Role             @relation(fields: [roleId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  workflowTemplateId String
+  workflowTemplate   WorkflowTemplate @relation(fields: [workflowTemplateId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  nextStepId         String?
+  isRejectionTarget  Boolean          @default(false)
+  isBypassTarget     Boolean          @default(false)
+  requiresAssignment Boolean          @default(true)
+  slaDurationMinutes Int?             // SLA duration in minutes, null = no SLA
+  positionX          Float?
+  positionY          Float?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  @@unique([workflowTemplateId, roleId, action, name])
 }
 
 model Invitation {
-  id                String          @id @default(cuid())
-  tenantId          String
-  tenant            Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  organization      String
-  email             String
-  eventId           String
-  event             Event           @relation(fields: [eventId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  participantTypeId String
-  participantType   ParticipantType @relation(fields: [participantTypeId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  restrictionId     String?
-  restriction       Restriction?    @relation(fields: [restrictionId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  maximumQuota      Int?
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
-  participants      Participant[]
+  id                    String                 @id @default(cuid())
+  tenantId              String
+  tenant                Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  organization          String
+  name                  String?
+  email                 String
+  eventId               String
+  event                 Event                  @relation(fields: [eventId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  participantTypeId     String?
+  participantType       ParticipantType?       @relation(fields: [participantTypeId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  restrictionId         String?
+  restriction           Restriction?           @relation(fields: [restrictionId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  maximumQuota          Int?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  participants          Participant[]
+  invitationConstraints InvitationConstraint[]
 
-  @@unique([tenantId, eventId, participantTypeId, restrictionId, organization, email])
+  @@unique([tenantId, eventId, organization, email])
+  @@index([tenantId, eventId, email])            // Performance: invitation lookup by user email
+}
+
+model InvitationConstraint {
+  id                  String       @id @default(cuid())
+  invitationId        String
+  invitation          Invitation   @relation(fields: [invitationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  participantTypeId   String
+  participantType     ParticipantType @relation(fields: [participantTypeId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  accessLevel         AccessLevel
+  quota               Int?
+  sourceRestrictionId String?
+  sourceRestriction   Restriction? @relation(fields: [sourceRestrictionId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  @@unique([invitationId, participantTypeId, accessLevel])
+  @@index([invitationId])
+  @@index([sourceRestrictionId])
 }
 
 model Participant {
@@ -534,7 +690,8 @@ model Participant {
   participantType       ParticipantType       @relation(fields: [participantTypeId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   registrationCode      String                @unique
   gender                String
-  title                 String
+  titleId               String
+  title                 Title                 @relation(fields: [titleId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   firstName             String
   familyName            String
   dateOfBirth           DateTime
@@ -547,7 +704,7 @@ model Participant {
   countryId             String
   country               Country               @relation("Country", fields: [countryId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   city                  String
-  email                 String
+  email                 String?
   website               String?
   telephone             String?
   address               String?
@@ -561,15 +718,31 @@ model Participant {
   arrivalDate           DateTime?
   wishList              String?
   attendClosedSession   Boolean               @default(false)
+  attendExecutiveCouncilClosedSession Boolean @default(false)
   status                RequestStatus
+  collectedBy           String?
+  collectedByPhone      String?
+  collectionNotes       String?
+  collectedAt           DateTime?
+  reprintCount          Int                   @default(0)
   stepId                String
   step                  Step                  @relation(fields: [stepId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   createdAt             DateTime              @default(now())
   updatedAt             DateTime              @updatedAt
+  deletedAt             DateTime?
   approvals             Approval[]
   documents             ParticipantDocument[]
 
-  @@unique([tenantId, eventId, email])
+  @@unique([tenantId, eventId, passportNumber])
+  @@index([deletedAt])
+  @@index([eventId, stepId, status])
+  @@index([tenantId, eventId, participantTypeId])
+  @@index([status, createdAt])
+  @@index([userId])                              // Performance: /requests list filter
+  @@index([invitationId])                        // Performance: quota validation counts
+  @@index([invitationId, participantTypeId])     // Performance: constraint counts
+  @@index([invitationId, attendClosedSession])   // Performance: closed session counts
+  @@index([invitationId, attendExecutiveCouncilClosedSession]) // Performance: executive council closed session counts
 }
 
 model ParticipantDocument {
@@ -593,6 +766,7 @@ model Approval {
   participant   Participant    @relation(fields: [participantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   stepId        String
   step          Step           @relation(fields: [stepId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  action        Action         @default(APPROVE)
   result        ApprovalResult
   remarks       String?
   userId        String
@@ -601,6 +775,9 @@ model Approval {
   updatedAt     DateTime       @updatedAt
 
   @@unique([participantId, stepId, userId, createdAt])
+  @@index([participantId, createdAt])
+  @@index([userId, createdAt])
+  @@index([stepId])
 }
 
 model AuditLog {
@@ -624,50 +801,111 @@ model AuditLog {
   @@index([createdAt])
 }
 
-model Draft {
-  id                String  @id @default(cuid())
-  userId            String  @unique
-  tenantId          String  @default("")
-  eventId           String  @default("")
-  participantTypeId String  @default("")
-  invitationId      String?
+// Badge Template for customizable badge designs
+model BadgeTemplate {
+  id          String  @id @default(cuid())
+  tenantId    String
+  tenant      Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  name        String
+  description String?
 
-  // General Info
-  requestFor     String?  @default("MYSELF") // Can be "MYSELF" or "OTHERS"
-  gender         String   @default("")
-  title          String   @default("")
-  firstName      String   @default("")
-  familyName     String   @default("")
-  dateOfBirth    DateTime @default(now())
-  nationalityId  String   @default("")
-  passportNumber String   @default("")
-  passportExpiry DateTime @default(now())
+  // Canvas dimensions (in points, 1pt = 1/72 inch)
+  width  Float @default(153) // ~54mm (CR80 card width)
+  height Float @default(243) // ~86mm (CR80 card height)
 
-  // Professional Info
-  organization      String  @default("")
-  jobTitle          String  @default("")
-  countryId         String  @default("")
-  city              String  @default("")
-  email             String  @default("")
-  website           String?
-  telephone         String?
-  address           String?
-  preferredLanguage String?
+  // Border settings
+  borderWidth  Float   @default(0)
+  borderColor  String  @default("#000000")
+  borderRadius Float   @default(0)
 
-  // Wishlist
-  needsVisa             Boolean   @default(false)
-  needsCarPass          Boolean   @default(false)
-  vehicleType           String?
-  vehiclePlateNumber    String?
-  needsCarFromOrganizer Boolean   @default(false)
-  flightNumber          String?
-  arrivalDate           DateTime?
-  wishList              String?
+  // Elements configuration (JSON array of BadgeElement objects)
+  // Each element: { id, type, page, x, y, width, height, style, field?, content?, src? }
+  elements Json @default("[]")
 
-  // Metadata
-  lastUpdated DateTime  @updatedAt
+  // Default badge ID prefix (e.g., "AU2025", "SUMMIT")
+  badgeIdPrefix String @default("BADGE")
+
+  // Whether this is the default template for new participant types
+  isDefault Boolean @default(false)
+
+  // Relations
+  templates Template[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+}
+
+// Setting value types
+enum SettingType {
+  STRING
+  NUMBER
+  BOOLEAN
+  JSON
+}
+
+// System Settings for admin-configurable values
+model SystemSetting {
+  id          String      @id @default(cuid())
+  key         String      // e.g., "auth.maxLoginAttempts", "email.senderAddress"
+  value       String      // Stored as string, parsed based on type
+  type        SettingType @default(STRING)
+  category    String      // e.g., "auth", "email", "upload", "validation", "reprint"
+  label       String      // Human-readable label for UI
+  description String?     // Help text for admins
+  tenantId    String?     // null = global setting, otherwise tenant-specific
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@unique([key, tenantId])
+  @@index([category])
+  @@index([tenantId])
+}
+
+// Database Backup for storing backup metadata
+model DatabaseBackup {
+  id           String       @id @default(cuid())
+  name         String
+  fileName     String
+  sizeBytes    BigInt
+  status       BackupStatus @default(PENDING)
+  backupType   BackupType   @default(MANUAL)
+  errorMessage String?
+
+  createdById String
+  createdBy   User   @relation(fields: [createdById], references: [id])
+
+  startedAt   DateTime?
+  completedAt DateTime?
   createdAt   DateTime  @default(now())
-  expiresAt   DateTime?
+  updatedAt   DateTime  @updatedAt
 
-  @@index([expiresAt])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// Custom Report for ad-hoc report builder
+model CustomReport {
+  id          String  @id @default(cuid())
+  name        String
+  description String?
+
+  dataSource String // Base model: 'Participant', 'Approval', etc.
+  config     Json   // Full report configuration
+
+  isPublic Boolean @default(false)
+
+  tenantId    String
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdById String
+  createdBy   User   @relation(fields: [createdById], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@index([createdById])
 }

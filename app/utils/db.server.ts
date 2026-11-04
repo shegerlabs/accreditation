@@ -2,6 +2,7 @@ import { remember } from '@epic-web/remember'
 import { PrismaClient } from '@prisma/client'
 import { LoaderFunctionArgs } from '@remix-run/node'
 import chalk from 'chalk'
+import { getSetting, SettingKeys } from './settings.server'
 
 const prisma = remember('prisma', () => {
 	// NOTE: if you change anything in this function you'll need to restart
@@ -111,6 +112,7 @@ interface FilterFieldOptions {
 	field: string
 	operator?: 'equals' | 'in' | 'before' | 'after' // Extendable for more operators if needed
 	isDate?: boolean // Add this flag to indicate date fields
+	isBoolean?: boolean // Add this flag to indicate boolean fields
 }
 
 /**
@@ -377,7 +379,7 @@ function createFilterConditions(
 				conditions[field] = { in: values }
 			}
 		} else if (isFilterFieldOptions(field)) {
-			const { field: fieldName, operator = 'equals', isDate } = field
+			const { field: fieldName, operator = 'equals', isDate, isBoolean } = field
 			const values = url.searchParams.getAll(fieldName)
 
 			if (values.includes('all')) {
@@ -385,20 +387,27 @@ function createFilterConditions(
 				return
 			}
 
+			// Helper to convert value based on field type
+			const convertValue = (value: string) => {
+				if (isDate) return new Date(value)
+				if (isBoolean) return value === 'true'
+				return value
+			}
+
 			if (values.length === 1) {
 				conditions[fieldName] = {
-					[operator]: isDate ? new Date(values[0]) : values[0],
+					[operator]: convertValue(values[0]),
 				}
 			} else if (values.length > 1) {
 				if (operator === 'in') {
 					conditions[fieldName] = {
-						in: values.map(value => (isDate ? new Date(value) : value)),
+						in: values.map(convertValue),
 					}
 				} else {
 					// For operators that don't support multiple values, use OR conditions
 					conditions[fieldName] = {
 						OR: values.map(value => ({
-							[operator]: isDate ? new Date(value) : value,
+							[operator]: convertValue(value),
 						})),
 					}
 				}
@@ -472,8 +481,15 @@ export async function filterAndPaginate<
 	const searchTerm = url.searchParams.get('search') || ''
 	const page = parseInt(url.searchParams.get('page') || '1', 10)
 	const pageSizeParam = url.searchParams.get('pageSize')
+
+	// Fetch default page size from settings
+	const defaultPageSize = await getSetting<number>(
+		SettingKeys.PAGINATION_DEFAULT_PAGE_SIZE,
+	)
 	const pageSize =
-		pageSizeParam === 'All' ? undefined : parseInt(pageSizeParam || '10', 10)
+		pageSizeParam === 'All'
+			? undefined
+			: parseInt(pageSizeParam || String(defaultPageSize), 10)
 
 	// Build search conditions
 	let searchConditions: SearchCondition = {}

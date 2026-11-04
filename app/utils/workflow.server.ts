@@ -1,4 +1,5 @@
-import { Action, Participant, ParticipantType, Step } from '@prisma/client'
+import { Action, AuditAction, AuditEntityType, Participant, Step } from '@prisma/client'
+import { createAuditLog } from './audit.server'
 import { prisma } from '~/utils/db.server'
 import { sendEmailAzure } from './email.server'
 
@@ -12,15 +13,13 @@ export async function processParticipant(
 		where: { id: participantId },
 		include: {
 			step: true,
-			participantType: true,
 		},
 	})
 
-	await logApproval(participant, userId, action, remarks)
-
+	// Execute action first, then log approval only if successful
 	switch (action) {
 		case Action.REJECT:
-			await handleRejection(participant, userId)
+			await handleRejection(participant, userId, remarks)
 			break
 		case Action.APPROVE:
 			await handleApproval(participant)
@@ -34,8 +33,45 @@ export async function processParticipant(
 		case Action.ARCHIVE:
 			await handleArchive(participant)
 			break
+		case Action.BYPASS:
+			await handleBypass(participant)
+			break
 		default:
 			throw new Error(`Unsupported action: ${action}`)
+	}
+
+	// Log approval only after action succeeds
+	await logApproval(participant, userId, action, remarks)
+
+	// Create audit log for workflow action
+	await createAuditLog({
+		action: mapWorkflowActionToAuditAction(action),
+		entityType: AuditEntityType.PARTICIPANT,
+		entityId: participantId,
+		description: `Workflow action ${action} performed on participant`,
+		userId,
+		tenantId: participant.tenantId,
+		metadata: {
+			workflowAction: action,
+			stepId: participant.stepId,
+			stepName: participant.step.name,
+			remarks,
+		},
+	})
+}
+
+function mapWorkflowActionToAuditAction(action: Action): AuditAction {
+	switch (action) {
+		case Action.APPROVE:
+			return AuditAction.APPROVE
+		case Action.REJECT:
+			return AuditAction.REJECT
+		case Action.PRINT:
+			return AuditAction.PRINT
+		case Action.BYPASS:
+			return AuditAction.BYPASS
+		default:
+			return AuditAction.OTHER
 	}
 }
 
@@ -56,61 +92,74 @@ async function logApproval(
 	})
 }
 
-async function handleRejection(
-	participant: Participant & { step: Step },
-	userId: string,
-) {
-	const mofaApprovalStep = await prisma.step.findFirst({
+async function handleBypass(participant: Participant & { step: Step }) {
+	// Find step marked as bypass target (e.g., Badge Print step)
+	const bypassTargetStep = await prisma.step.findFirst({
 		where: {
 			workflowId: participant.step.workflowId,
-			name: 'MOFA Approval',
-			action: Action.APPROVE,
+			isBypassTarget: true,
 		},
 	})
 
-	if (!mofaApprovalStep) return
+	if (!bypassTargetStep) {
+		throw new Error(
+			'No bypass target configured for this workflow. Please mark a step as the bypass target in workflow settings.',
+		)
+	}
 
 	await prisma.participant.update({
 		where: { id: participant.id },
 		data: {
-			stepId: mofaApprovalStep.id,
+			stepId: bypassTargetStep.id,
+			status: 'BYPASSED',
+		},
+	})
+}
+
+async function handleRejection(
+	participant: Participant & { step: Step },
+	userId: string,
+	remarks?: string,
+) {
+	// Find step marked as rejection target (where rejected participants return)
+	const rejectionTargetStep = await prisma.step.findFirst({
+		where: {
+			workflowId: participant.step.workflowId,
+			isRejectionTarget: true,
+		},
+	})
+
+	if (!rejectionTargetStep) {
+		throw new Error(
+			'No rejection target configured for this workflow. Please mark a step as the rejection target in workflow settings.',
+		)
+	}
+
+	await prisma.participant.update({
+		where: { id: participant.id },
+		data: {
+			stepId: rejectionTargetStep.id,
 			status: 'REJECTED',
 		},
 	})
 
-	await sendRejectionEmail(participant.email)
-}
-
-async function handleApproval(
-	participant: Participant & { step: Step; participantType: ParticipantType },
-) {
-	const nextStepId = await determineNextStep(participant)
-	if (!nextStepId) return
-
-	await updateParticipantStatus(participant.id, nextStepId)
-}
-
-async function determineNextStep(
-	participant: Participant & { step: Step; participantType: ParticipantType },
-): Promise<string | null> {
-	if (
-		participant.participantType.name === 'Press / Media' &&
-		participant.step.name === 'Review Request'
-	) {
-		const etBroadcastStep = await prisma.step.findFirst({
-			where: { name: 'ET Broadcast Approval' },
-		})
-		return etBroadcastStep?.id ?? null
+	// Only send email if participant has an email address
+	if (participant.email) {
+		await sendRejectionEmail(participant.email, remarks)
 	}
-
-	return participant.step.nextStepId ?? null
 }
 
-async function updateParticipantStatus(participantId: string, stepId: string) {
+async function handleApproval(participant: Participant & { step: Step }) {
+	if (!participant.step.nextStepId) return
+
+	const nextStep = await prisma.step.findUniqueOrThrow({
+		where: { id: participant.step.nextStepId },
+	})
+
 	await prisma.participant.update({
-		where: { id: participantId },
+		where: { id: participant.id },
 		data: {
-			stepId,
+			stepId: nextStep.id,
 			status: 'INPROGRESS',
 		},
 	})
@@ -156,36 +205,41 @@ async function handleArchive(participant: Participant & { step: Step }) {
 		},
 	})
 
-	await sendApprovalEmail(participant.email)
+	// Only send email if participant has an email address
+	if (participant.email) {
+		await sendFinalizationEmail(participant.email)
+	}
 }
 
 function getRemarksByAction(action: Action): string {
 	switch (action) {
 		case Action.APPROVE:
-			return 'Approved successfully.'
+			return 'Request approved and forwarded to next validation stage'
 		case Action.REJECT:
-			return 'Rejected due to compliance issues.'
+			return 'Request rejected and returned to applicant for revision'
 		case Action.PRINT:
-			return 'Printed successfully.'
+			return 'Badge printed and ready for collection'
 		case Action.NOTIFY:
-			return 'Notification sent successfully.'
+			return 'Applicant notified of accreditation status'
 		case Action.ARCHIVE:
-			return 'Archived successfully.'
+			return 'Accreditation completed and archived'
+		case Action.BYPASS:
+			return 'Validation steps bypassed by administrator - sent directly to badge printing'
 		default:
-			return 'Action processed.'
+			return 'Action processed'
 	}
 }
 
-async function sendRejectionEmail(email: string) {
+async function sendRejectionEmail(email: string, remarks?: string) {
 	void sendEmailAzure({
 		to: email,
 		subject: 'Request Rejected',
 		plainText: 'Your request has been rejected.',
-		html: '<p>Your request has been rejected.</p>',
+		html: `<p>Your request has been rejected. ${remarks ? `<br><br>${remarks}` : ''}</p>`,
 	})
 }
 
-async function sendApprovalEmail(email: string) {
+async function sendFinalizationEmail(email: string) {
 	void sendEmailAzure({
 		to: email,
 		subject: 'Request Finalized',

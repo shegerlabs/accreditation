@@ -6,7 +6,13 @@ import {
 	LoaderFunctionArgs,
 	redirect,
 } from '@remix-run/node'
-import { Form, Link, useActionData, useSearchParams } from '@remix-run/react'
+import {
+	Form,
+	Link,
+	useActionData,
+	useLoaderData,
+	useSearchParams,
+} from '@remix-run/react'
 import ReactDOMServer from 'react-dom/server'
 import { AuthenticityTokenInput } from 'remix-utils/csrf/react'
 import { HoneypotInputs } from 'remix-utils/honeypot/react'
@@ -29,6 +35,7 @@ import { prisma } from '~/utils/db.server'
 import { sendEmailAzure } from '~/utils/email.server'
 import { checkHoneypot } from '~/utils/honeypot.server'
 import { useIsPending } from '~/utils/misc'
+import { getSetting, SettingKeys } from '~/utils/settings.server'
 import { EmailSchema } from '~/utils/validations'
 import { prepareVerification } from '~/utils/verification.server'
 const SignupSchema = z.object({
@@ -39,11 +46,36 @@ const SignupSchema = z.object({
 export async function loader({ request }: LoaderFunctionArgs) {
 	await requireAnonymous(request)
 
-	return json({})
+	// Check if there are any published events available for registration
+	const publishedEventCount = await prisma.event.count({
+		where: { status: 'PUBLISHED' },
+	})
+
+	return json({
+		registrationOpen: publishedEventCount > 0,
+	})
 }
 
 export async function action({ request }: ActionFunctionArgs) {
 	await requireAnonymous(request)
+
+	// Check if there are any published events available for registration
+	const publishedEventCount = await prisma.event.count({
+		where: { status: 'PUBLISHED' },
+	})
+
+	if (publishedEventCount === 0) {
+		return json(
+			{
+				result: {
+					status: 'error' as const,
+					error: { '': ['Registration is currently closed. No events are open for registration.'] },
+				},
+			},
+			{ status: 403 },
+		)
+	}
+
 	const formData = await request.formData()
 	await validateCSRF(formData, request.headers)
 	checkHoneypot(formData)
@@ -75,8 +107,11 @@ export async function action({ request }: ActionFunctionArgs) {
 
 	const { email, redirectTo: postVerificationRedirectTo } = submission.value
 
+	const otpValidityMinutes = await getSetting<number>(
+		SettingKeys.OTP_VALIDITY_MINUTES,
+	)
 	const { verifyUrl, redirectTo, otp } = await prepareVerification({
-		period: 10 * 60,
+		period: otpValidityMinutes * 60,
 		request,
 		type: 'onboarding',
 		target: email,
@@ -96,6 +131,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function SignupRoute() {
+	const { registrationOpen } = useLoaderData<typeof loader>()
 	const actionData = useActionData<typeof action>()
 	const isPending = useIsPending()
 
@@ -114,6 +150,55 @@ export default function SignupRoute() {
 			redirectTo,
 		},
 	})
+
+	// Show registration closed message if no events are published
+	if (!registrationOpen) {
+		return (
+			<div className="flex min-h-full items-center justify-center p-4">
+				<Card className="mx-auto max-w-md text-center">
+					<CardHeader className="pb-4">
+						<div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-slate-100">
+							<svg
+								className="h-8 w-8 text-slate-400"
+								fill="none"
+								stroke="currentColor"
+								viewBox="0 0 24 24"
+							>
+								<path
+									strokeLinecap="round"
+									strokeLinejoin="round"
+									strokeWidth={1.5}
+									d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+								/>
+							</svg>
+						</div>
+						<CardTitle className="text-xl font-semibold text-slate-800">
+							Registration Unavailable
+						</CardTitle>
+						<CardDescription className="mt-2 text-slate-500">
+							There are currently no events open for registration
+						</CardDescription>
+					</CardHeader>
+					<CardContent className="pt-0">
+						<p className="mb-6 text-sm text-slate-500">
+							New events will be announced soon. Please check back later or
+							contact your organization&apos;s focal person for more
+							information.
+						</p>
+						<div className="border-t pt-4 text-sm text-slate-600">
+							Already have an account?{' '}
+							<Link
+								to="/login"
+								className="font-medium text-emerald-600 hover:text-emerald-500"
+							>
+								Sign in
+							</Link>
+						</div>
+					</CardContent>
+				</Card>
+			</div>
+		)
+	}
 
 	return (
 		<div className="flex min-h-full items-center justify-center p-4">

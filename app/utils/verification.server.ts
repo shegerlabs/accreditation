@@ -237,10 +237,10 @@ export async function handleChangeEmailVerification({
 		data: { email: newEmail },
 	})
 
-	const emailBody = `We are writing to let you know that your email address has been changed to ${user.email}. \n\n
-	If you changed your email address, then you can safely ignore this.\n\n
-	But if you didn't change your email address, then please contact support immediately.\n\n
-	Your Account ID: ${user.id}`
+	// SECURITY: Don't include internal user ID in emails (information disclosure)
+	const emailBody = `We are writing to let you know that your email address has been changed to ${user.email}.\n\n
+If you changed your email address, then you can safely ignore this.\n\n
+But if you didn't change your email address, then please contact support immediately.`
 
 	void sendEmailAzure({
 		to: prevUser.email,

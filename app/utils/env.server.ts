@@ -2,11 +2,28 @@ import { z } from 'zod'
 
 const schema = z.object({
 	NODE_ENV: z.enum(['production', 'development', 'test'] as const),
-	DATABASE_URL: z.string(),
-	SESSION_SECRET: z.string(),
-	HONEYPOT_SECRET: z.string(),
-	AZURE_STORAGE_CONNECTION_STRING: z.string(),
-	EMAIL_CONNECTION_STRING: z.string(),
+	DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
+	SESSION_SECRET: z
+		.string()
+		.min(32, 'SESSION_SECRET must be at least 32 characters'),
+	HONEYPOT_SECRET: z
+		.string()
+		.min(16, 'HONEYPOT_SECRET must be at least 16 characters'),
+	AZURE_STORAGE_CONNECTION_STRING: z
+		.string()
+		.min(1, 'AZURE_STORAGE_CONNECTION_STRING is required'),
+	EMAIL_CONNECTION_STRING: z
+		.string()
+		.min(1, 'EMAIL_CONNECTION_STRING is required'),
+	// Optional: Only required if using Resend instead of Azure Communication Services
+	RESEND_API_KEY: z.string().optional(),
+	// Security: Domain allowlist for X-Forwarded-Host validation (comma-separated)
+	// Prevents host header injection attacks in password reset emails
+	ALLOWED_DOMAINS: z.string().optional(),
+	// Shared secret for admin impersonation tokens (must match admin system)
+	IMPERSONATION_SECRET: z.string().min(32).optional(),
+	// Admin portal URL for redirecting back after stopping impersonation
+	ADMIN_PORTAL_URL: z.string().optional(),
 })
 
 declare global {

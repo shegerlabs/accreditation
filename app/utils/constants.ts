@@ -15,9 +15,9 @@ export const unverifiedSessionIdKey = 'unverified-session-id'
 export const rememberMeSessionKey = 'remember-me'
 export const verifiedTimeKey = 'verified-time'
 
-export const AUTH_SETTINGS = {
-	MAX_LOGIN_ATTEMPTS: 5,
-	LOCKOUT_DURATION: 30, // minutes
-	AUTO_RESET_AFTER: 60, // minutes - reset failed attempts after this duration
-	MAX_LOCK_COUNT: 3, // maximum number of times an account can be locked before requiring manual intervention
-}
+// AUTH_SETTINGS have been moved to SystemSettings (database-configurable)
+// Use getSetting() from '~/utils/settings.server' instead:
+// - SettingKeys.AUTH_MAX_LOGIN_ATTEMPTS
+// - SettingKeys.AUTH_LOCKOUT_DURATION_MINUTES
+// - SettingKeys.AUTH_AUTO_RESET_AFTER_MINUTES
+// - SettingKeys.AUTH_MAX_LOCK_COUNT

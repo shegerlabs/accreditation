@@ -1,11 +1,6 @@
 import { getFormProps, useForm } from '@conform-to/react'
 import { getZodConstraint, parseWithZod } from '@conform-to/zod'
-import {
-	ActionFunctionArgs,
-	MetaFunction,
-	json,
-	redirect,
-} from '@remix-run/node'
+import { ActionFunctionArgs, MetaFunction, json } from '@remix-run/node'
 import { Form, Link, useActionData } from '@remix-run/react'
 import ReactDOMServer from 'react-dom/server'
 import { AuthenticityTokenInput } from 'remix-utils/csrf/react'
@@ -28,6 +23,8 @@ import { validateCSRF } from '~/utils/csrf.server'
 import { prisma } from '~/utils/db.server'
 import { sendEmailAzure } from '~/utils/email.server'
 import { checkHoneypot } from '~/utils/honeypot.server'
+import { getSetting, SettingKeys } from '~/utils/settings.server'
+import { redirectWithToast } from '~/utils/toast.server'
 import { EmailSchema, UsernameSchema } from '~/utils/validations'
 import { prepareVerification } from '~/utils/verification.server'
 
@@ -42,25 +39,7 @@ export async function action({ request }: ActionFunctionArgs) {
 	checkHoneypot(formData)
 
 	const submission = await parseWithZod(formData, {
-		schema: ForgotPasswordSchema.superRefine(async (data, ctx) => {
-			const user = await prisma.user.findFirst({
-				where: {
-					OR: [
-						{ email: data.usernameOrEmail },
-						{ username: data.usernameOrEmail },
-					],
-				},
-			})
-
-			if (!user) {
-				ctx.addIssue({
-					path: ['usernameOrEmail'],
-					code: z.ZodIssueCode.custom,
-					message: 'No user found with that email or username',
-				})
-				return
-			}
-		}),
+		schema: ForgotPasswordSchema,
 		async: true,
 	})
 
@@ -72,28 +51,42 @@ export async function action({ request }: ActionFunctionArgs) {
 	}
 
 	const { usernameOrEmail } = submission.value
-	const user = await prisma.user.findFirstOrThrow({
+
+	// SECURITY: Look up user but don't reveal if they exist (prevents user enumeration)
+	const user = await prisma.user.findFirst({
 		where: { OR: [{ email: usernameOrEmail }, { username: usernameOrEmail }] },
 		select: { email: true, username: true },
 	})
 
-	const { verifyUrl, redirectTo, otp } = await prepareVerification({
-		period: 10 * 60,
-		request,
-		type: 'reset-password',
-		target: usernameOrEmail,
-	})
+	// Only send email if user actually exists, but always show same response
+	if (user) {
+		const otpValidityMinutes = await getSetting<number>(
+			SettingKeys.OTP_VALIDITY_MINUTES,
+		)
+		const { verifyUrl, otp } = await prepareVerification({
+			period: otpValidityMinutes * 60,
+			request,
+			type: 'reset-password',
+			target: usernameOrEmail,
+		})
 
-	void sendEmailAzure({
-		to: user.email,
-		subject: 'Accredition Password Reset',
-		plainText: `Here's your code: ${otp}. Or open this: ${verifyUrl.toString()}`,
-		html: ReactDOMServer.renderToString(
-			<ForgotPasswordEmail otp={otp} verifyUrl={verifyUrl.toString()} />,
-		),
-	})
+		void sendEmailAzure({
+			to: user.email,
+			subject: 'Accreditation Password Reset',
+			plainText: `Here's your code: ${otp}. Or open this: ${verifyUrl.toString()}`,
+			html: ReactDOMServer.renderToString(
+				<ForgotPasswordEmail otp={otp} verifyUrl={verifyUrl.toString()} />,
+			),
+		})
+	}
 
-	return redirect(redirectTo.toString())
+	// SECURITY: Always show the same response regardless of whether user exists
+	return redirectWithToast('/login', {
+		type: 'message',
+		title: 'Check your email',
+		description:
+			'If an account exists with that email, you will receive a password reset link.',
+	})
 }
 
 export const meta: MetaFunction = () => {

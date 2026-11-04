@@ -87,9 +87,11 @@ export async function deleteFileIfExists({
 		prefix: prefix ? `${prefix}/${fileName}` : fileName,
 	})
 
-	blobs.forEach(async blob => {
-		await containerClient.deleteBlob(blob)
-	})
+	await Promise.all(
+		blobs.map(async blob => {
+			await containerClient.deleteBlob(blob)
+		})
+	)
 }
 
 export async function getBlobs({

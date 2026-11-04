@@ -1,12 +1,21 @@
 import { json, redirect, type LoaderFunctionArgs } from '@remix-run/node'
-import { Link } from '@remix-run/react'
+import { Link, useLoaderData } from '@remix-run/react'
 import { Award, ClipboardList, FileCheck, Users } from 'lucide-react'
 import { Button } from '~/components/ui/button'
 import { Card, CardContent } from '~/components/ui/card'
-import { getUser, getUserId, logout } from '~/utils/auth.server'
+import {
+	getUser,
+	getUserId,
+	logout,
+	requireUserId,
+	requireUserWithRoles,
+} from '~/utils/auth.server'
+import { prisma } from '~/utils/db.server'
+import { invariantResponse } from '~/utils/misc'
 import { useOptionalUser, userHasRole, userHasRoles } from '~/utils/user'
 
 export async function loader({ request }: LoaderFunctionArgs) {
+	// const userId = await requireUserId(request)
 	const userId = await getUserId(request)
 	const user = userId ? await getUser(userId) : null
 
@@ -17,15 +26,28 @@ export async function loader({ request }: LoaderFunctionArgs) {
 	if (
 		userHasRoles(user, [
 			'admin',
-			'mofa-validator',
-			'mofa-printer',
-			'niss-validator',
+			'tenant',
+			'validator',
+			'printer',
+			'dispatcher',
 		])
 	) {
 		throw await logout({ request })
 	}
 
-	return json({})
+	const event = await prisma.event.findFirst({
+		where: {
+			status: 'PUBLISHED',
+		},
+	})
+
+	return json({
+		event: event ?? {
+			name: 'Pan-African Parliament Meetings',
+			startDate: new Date(),
+			endDate: new Date(),
+		},
+	})
 }
 
 export default function LandingPage() {
@@ -33,6 +55,8 @@ export default function LandingPage() {
 	if (userHasRole(user, 'admin')) {
 		return <></>
 	}
+
+	const { event } = useLoaderData<typeof loader>()
 
 	return (
 		<div className="flex min-h-screen flex-col">
@@ -42,12 +66,13 @@ export default function LandingPage() {
 						<div className="flex flex-col items-center space-y-4 text-center">
 							<div className="space-y-2">
 								<h1 className="text-3xl font-bold tracking-tighter sm:text-4xl md:text-5xl lg:text-6xl/none">
-									Accreditation for Pan-African Parliament Meetings
+									{event.name} Accreditation
 								</h1>
 								<p className="mx-auto max-w-[700px] text-gray-500 dark:text-gray-400 md:text-xl">
 									Secure your participation in this pivotal gathering of
 									Parliamentarians from across Africa. Start your accreditation
-									process now for the upcoming Pan-African Parliament Meetings.
+									process now for the upcoming{' '}
+									{event.name}
 								</p>
 							</div>
 							<div className="space-x-4">

@@ -4,6 +4,7 @@ node_modules
 /.cache
 /build
 .env
+.env.test
 /prisma/seed.ts
 
 /prisma/data.db
@@ -12,3 +13,11 @@ node_modules
 
 # generated files
 # /app/components/ui/icons
+# Test artifacts
+tests/e2e/.auth/
+tests/coverage/
+tests/playwright-report/
+tests/test-results/
+blob-report/
+junit.xml
+*.tsbuildinfo

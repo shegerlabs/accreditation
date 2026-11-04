@@ -24,19 +24,26 @@ export function CheckboxGroupField({
 			? [meta.initialValue]
 			: (meta.initialValue ?? [])
 
+	// Get extra column keys from first item (if items exist)
+	const extraKeys = items?.[0]
+		? Object.keys(items[0]).filter(key => key !== 'name' && key !== 'value')
+		: []
+
+	if (!items || items.length === 0) {
+		return <p className="text-sm text-muted-foreground">No items available</p>
+	}
+
 	return (
 		<Table className="border-collapse border">
 			<TableHeader>
 				<TableRow className="border-b">
 					<TableHead className="p-2">Select</TableHead>
 					<TableHead className="p-2">Name</TableHead>
-					{Object.keys(items[0])
-						.filter(key => key !== 'name' && key !== 'value')
-						.map(key => (
-							<TableHead key={key} className="p-2">
-								{key}
-							</TableHead>
-						))}
+					{extraKeys.map(key => (
+						<TableHead key={key} className="p-2">
+							{key}
+						</TableHead>
+					))}
 				</TableRow>
 			</TableHeader>
 			<TableBody>

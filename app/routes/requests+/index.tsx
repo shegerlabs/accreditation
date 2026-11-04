@@ -1,10 +1,9 @@
 import { LoaderFunctionArgs, json } from '@remix-run/node'
-import { useLoaderData } from '@remix-run/react'
-import { EditIcon, EyeIcon, UserIcon } from 'lucide-react'
+import { Link, useLoaderData } from '@remix-run/react'
+import { EditIcon, EyeIcon, ImageIcon } from 'lucide-react'
 import { useMediaQuery } from 'react-responsive'
 import { DataList } from '~/components/data-list'
 import { SearchBar } from '~/components/search-bar'
-import { Badge } from '~/components/ui/badge'
 import { requireUserWithRoles } from '~/utils/auth.server'
 import { filterAndPaginate, prisma } from '~/utils/db.server'
 import { registrationWizard } from '~/utils/registration.server'
@@ -27,7 +26,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
 			'firstName',
 			'familyName',
 		],
-		filterFields: ['status', 'participantTypeId'],
+		filterFields: [
+			'status',
+			'participantTypeId',
+			{ field: 'attendClosedSession', isBoolean: true },
+		],
 		orderBy: [{ createdAt: 'desc' }],
 		select: {
 			id: true,
@@ -37,6 +40,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 			organization: true,
 			registrationCode: true,
 			status: true,
+			attendClosedSession: true,
 			step: {
 				select: {
 					name: true,
@@ -61,6 +65,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
 				select: {
 					name: true,
 				},
+			},
+			documents: {
+				where: {
+					documentType: 'PHOTO',
+				},
+				select: {
+					id: true,
+				},
+				take: 1,
 			},
 		},
 	})
@@ -101,7 +114,7 @@ export default function IndexRoute() {
 					<SearchBar
 						status={data.status}
 						action="/requests"
-						autoSubmit={false}
+						autoSubmit={true}
 						showAddButton={false}
 						filters={[
 							{
@@ -111,7 +124,7 @@ export default function IndexRoute() {
 								options: [
 									{ value: 'all', label: 'All' },
 									...participantTypes
-										.filter(participantType => participantType.name !== 'All')
+										.filter(participantType => participantType.name !== 'Any')
 										.map(participantType => ({
 											value: participantType.id,
 											label: participantType.name,
@@ -127,6 +140,16 @@ export default function IndexRoute() {
 									{ value: 'INPROGRESS', label: 'In Progress' },
 									{ value: 'REJECTED', label: 'Rejected' },
 									{ value: 'PRINTED', label: 'Printed' },
+								],
+							},
+							{
+								name: 'attendClosedSession',
+								label: 'Session',
+								type: 'select',
+								options: [
+									{ value: 'all', label: 'All' },
+									{ value: 'true', label: 'Closed' },
+									{ value: 'false', label: 'Open' },
 								],
 							},
 						]}
@@ -145,21 +168,45 @@ export default function IndexRoute() {
 					data={data.participants}
 					columns={[
 						{
-							key: 'registrationCode',
-							header: 'Code',
-							render: (participant: any) => participant.registrationCode,
-						},
-						{
 							key: 'name',
-							header: 'Full Name',
-							render: (participant: any) => (
-								<div className="flex items-center space-x-2">
-									<UserIcon className="h-4 w-4 text-primary" />
-									<span>
-										{participant.firstName} {participant.familyName}
-									</span>
-								</div>
-							),
+							header: 'Participant',
+							render: (participant: any) => {
+								const photo = participant.documents?.[0]
+								return (
+									<Link
+										to={`/requests/${participant.id}`}
+										className="flex items-center gap-3"
+									>
+										{photo ? (
+											<img
+												src={`/resources/participants/${photo.id}`}
+												alt={`${participant.firstName} ${participant.familyName}`}
+												className="h-10 w-10 rounded-full object-cover"
+												loading="lazy"
+												onError={e => {
+													const target = e.target as HTMLImageElement
+													target.style.display = 'none'
+													if (target.parentElement) {
+														target.parentElement.innerHTML = `<div class="flex h-10 w-10 items-center justify-center rounded-full bg-muted"><svg class="h-5 w-5 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg></div>`
+													}
+												}}
+											/>
+										) : (
+											<div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
+												<ImageIcon className="h-5 w-5 text-muted-foreground" />
+											</div>
+										)}
+										<div>
+											<div className="font-medium">
+												{participant.registrationCode}
+											</div>
+											<div className="text-sm text-muted-foreground">
+												{participant.firstName} {participant.familyName}
+											</div>
+										</div>
+									</Link>
+								)
+							},
 						},
 						{
 							key: 'participantType',
@@ -167,60 +214,52 @@ export default function IndexRoute() {
 							render: (participant: any) => participant.participantType.name,
 						},
 						{
-							key: 'email',
-							header: 'Email',
-							render: (participant: any) => participant.email,
-						},
-						{
-							key: 'organization',
-							header: 'Organization',
-							render: (participant: any) => participant.organization,
-						},
-						{
 							key: 'status',
 							header: 'Status',
+							render: (participant: any) => participant.status,
+						},
+						{
+							key: 'session',
+							header: 'Session',
+							render: (participant: any) => (
+								<span
+									className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
+										participant.attendClosedSession
+											? 'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-600/20'
+											: 'bg-gray-50 text-gray-600 ring-1 ring-inset ring-gray-500/10'
+									}`}
+								>
+									{participant.attendClosedSession ? 'Closed' : 'Open'}
+								</span>
+							),
+						},
+						{
+							key: 'step',
+							header: 'Stage',
 							render: (participant: any) => {
-								let status = participant.status
-								if (
-									participant.status === 'REJECTED' &&
-									participant.step?.role?.name === 'first-validator'
+								const roleName = participant.step?.role?.name
+								let displayName = roleName
+
+								if (roleName === 'reviewer') {
+									displayName = 'focal person'
+								} else if (
+									roleName === 'first-validator' ||
+									roleName === 'second-validator'
 								) {
-									status = 'INPROGRESS'
+									displayName = 'Validating'
+								} else if (roleName === 'badge-printer') {
+									displayName = 'Printing'
 								}
 
-								const statusStyles = {
-									INPROGRESS:
-										'bg-orange-100 text-orange-800 hover:bg-orange-100/80',
-									REJECTED: 'bg-red-100 text-red-800 hover:bg-red-100/80',
-									PRINTED: 'bg-green-100 text-green-800 hover:bg-green-100/80',
-									APPROVED: 'bg-blue-100 text-blue-800 hover:bg-blue-100/80',
-								}
 								return (
-									<Badge
-										className={
-											statusStyles[
-												participant.status as keyof typeof statusStyles
-											] ?? ''
-										}
-									>
-										{status}
-									</Badge>
+									<div className="flex items-center">
+										<span className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-sm font-medium text-emerald-700 ring-1 ring-inset ring-emerald-700/10">
+											{displayName}
+										</span>
+									</div>
 								)
 							},
 						},
-						// {
-						// 	key: 'step',
-						// 	header: 'Current Step',
-						// 	render: (participant: any) => (
-						// 		<div className="flex items-center">
-						// 			<span className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-sm font-medium text-emerald-700 ring-1 ring-inset ring-emerald-700/10">
-						// 				{participant.step?.role?.name === 'reviewer'
-						// 					? 'focal person'
-						// 					: participant.step?.role?.name}
-						// 			</span>
-						// 		</div>
-						// 	),
-						// },
 					]}
 					actions={[
 						...(userHasPermission(user, 'read:participant:own')

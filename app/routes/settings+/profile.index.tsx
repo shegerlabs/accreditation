@@ -1,6 +1,7 @@
 import { ActionFunctionArgs, json, LoaderFunctionArgs } from '@remix-run/node'
 import { Link, useFetcher, useLoaderData } from '@remix-run/react'
-import { CalendarDays, Mail } from 'lucide-react'
+import { format } from 'date-fns'
+import { CalendarDays, KeyRound, Mail, Monitor, Shield, User } from 'lucide-react'
 import { AuthenticityTokenInput } from 'remix-utils/csrf/react'
 import { Avatar, AvatarFallback, AvatarImage } from '~/components/ui/avatar'
 import { Button } from '~/components/ui/button'
@@ -8,11 +9,11 @@ import {
 	Card,
 	CardContent,
 	CardDescription,
-	CardFooter,
 	CardHeader,
 	CardTitle,
 } from '~/components/ui/card'
 import { Icon } from '~/components/ui/icon'
+import { Separator } from '~/components/ui/separator'
 import { StatusButton } from '~/components/ui/status-button'
 import {
 	requireUserId,
@@ -31,9 +32,7 @@ type ProfileActionArgs = {
 	formData: FormData
 }
 
-const profileUpdateActionIntent = 'update-profile'
 const signOutOfSessionsActionIntent = 'sign-out-of-sessions'
-const deleteDataActionIntent = 'delete-data'
 
 export async function action({ request }: ActionFunctionArgs) {
 	await requireUserWithRoles(request, ['user', 'focal'])
@@ -101,53 +100,188 @@ export async function loader({ request }: LoaderFunctionArgs) {
 	return json({ user, isTwoFAEnabled: Boolean(verification) })
 }
 
-export default function IndexRoute() {
+function getInitials(name: string | null, username: string): string {
+	if (name) {
+		const parts = name.trim().split(/\s+/)
+		if (parts.length >= 2) {
+			return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+		}
+		return name.slice(0, 2).toUpperCase()
+	}
+	return username.slice(0, 2).toUpperCase()
+}
+
+export default function ProfileIndexRoute() {
 	const { user, isTwoFAEnabled } = useLoaderData<typeof loader>()
+	const initials = getInitials(user.name, user.username)
 
 	return (
-		<Card className="mx-auto w-full">
-			<CardHeader className="flex flex-row items-center gap-4">
-				<Avatar className="h-24 w-24">
-					<AvatarImage
-						src="/placeholder.svg?height=96&width=96"
-						alt="User's profile picture"
-					/>
-					<AvatarFallback>JD</AvatarFallback>
-				</Avatar>
-				<div className="flex flex-col">
-					<CardTitle className="text-2xl">{user.name}</CardTitle>
-					<CardDescription>@{user.username}</CardDescription>
-				</div>
-			</CardHeader>
-			<CardContent className="grid gap-4">
-				<div className="flex items-center">
-					<CalendarDays className="mr-2 h-4 w-4" />
-					<span>Joined {user.createdAt.toString()}</span>
-				</div>
-				<div className="flex items-center">
-					<Mail className="mr-2 h-4 w-4" />
-					<span>{user.email}</span>
-				</div>
-				<SignOutOfSessions />
-			</CardContent>
-			<CardFooter className="flex justify-between">
-				{/* <Button variant="outline">Edit Profile</Button> */}
-				<div className="flex items-center gap-2">
-					<Link to="/settings/profile/change-email">
-						<Button>Change Email</Button>
-					</Link>
-					<Link to="/settings/profile/two-factor">
-						<Button>
-							{isTwoFAEnabled ? (
-								<Icon name="lock-closed">2FA is enabled</Icon>
-							) : (
-								<Icon name="lock-open-1">Enable 2FA</Icon>
-							)}
-						</Button>
-					</Link>
-				</div>
-			</CardFooter>
-		</Card>
+		<div className="space-y-6">
+			{/* Profile Information Section */}
+			<Card>
+				<CardHeader>
+					<div className="flex items-center justify-between">
+						<div>
+							<CardTitle className="flex items-center gap-2">
+								<User className="h-5 w-5" />
+								Profile Information
+							</CardTitle>
+							<CardDescription>
+								Your personal details and account information
+							</CardDescription>
+						</div>
+					</div>
+				</CardHeader>
+				<CardContent className="space-y-6">
+					<div className="flex items-center gap-6">
+						<Avatar className="h-24 w-24">
+							{user.image?.id ? (
+								<AvatarImage
+									src={`/resources/user-images/${user.image.id}`}
+									alt={user.name ?? user.username}
+								/>
+							) : null}
+							<AvatarFallback className="text-2xl font-semibold">
+								{initials}
+							</AvatarFallback>
+						</Avatar>
+						<div className="space-y-1">
+							<h3 className="text-2xl font-semibold">
+								{user.name ?? 'No name set'}
+							</h3>
+							<p className="text-muted-foreground">@{user.username}</p>
+						</div>
+					</div>
+
+					<Separator />
+
+					<div className="grid gap-4 sm:grid-cols-2">
+						<div className="flex items-center gap-3">
+							<div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
+								<Mail className="h-5 w-5 text-muted-foreground" />
+							</div>
+							<div>
+								<p className="text-sm text-muted-foreground">Email</p>
+								<p className="font-medium">{user.email}</p>
+							</div>
+						</div>
+						<div className="flex items-center gap-3">
+							<div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
+								<CalendarDays className="h-5 w-5 text-muted-foreground" />
+							</div>
+							<div>
+								<p className="text-sm text-muted-foreground">Member since</p>
+								<p className="font-medium">
+									{format(new Date(user.createdAt), 'MMMM d, yyyy')}
+								</p>
+							</div>
+						</div>
+					</div>
+				</CardContent>
+			</Card>
+
+			{/* Security Section */}
+			<Card>
+				<CardHeader>
+					<CardTitle className="flex items-center gap-2">
+						<Shield className="h-5 w-5" />
+						Security
+					</CardTitle>
+					<CardDescription>
+						Manage your account security settings
+					</CardDescription>
+				</CardHeader>
+				<CardContent className="space-y-4">
+					<div className="flex items-center justify-between rounded-lg border p-4">
+						<div className="flex items-center gap-3">
+							<div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
+								<Mail className="h-5 w-5 text-muted-foreground" />
+							</div>
+							<div>
+								<p className="font-medium">Email Address</p>
+								<p className="text-sm text-muted-foreground">
+									Change your account email address
+								</p>
+							</div>
+						</div>
+						<Link to="/settings/profile/change-email">
+							<Button variant="outline" size="sm">
+								Change
+							</Button>
+						</Link>
+					</div>
+
+					<div className="flex items-center justify-between rounded-lg border p-4">
+						<div className="flex items-center gap-3">
+							<div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
+								<KeyRound className="h-5 w-5 text-muted-foreground" />
+							</div>
+							<div>
+								<p className="font-medium">Password</p>
+								<p className="text-sm text-muted-foreground">
+									Update your password regularly to keep your account secure
+								</p>
+							</div>
+						</div>
+						<Link to="/settings/profile/change-password">
+							<Button variant="outline" size="sm">
+								Change
+							</Button>
+						</Link>
+					</div>
+
+					<div className="flex items-center justify-between rounded-lg border p-4">
+						<div className="flex items-center gap-3">
+							<div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
+								<Shield className="h-5 w-5 text-muted-foreground" />
+							</div>
+							<div>
+								<p className="font-medium">Two-Factor Authentication</p>
+								<p className="text-sm text-muted-foreground">
+									{isTwoFAEnabled
+										? 'Your account is protected with 2FA'
+										: 'Add an extra layer of security to your account'}
+								</p>
+							</div>
+						</div>
+						<Link to="/settings/profile/two-factor">
+							<Button
+								variant={isTwoFAEnabled ? 'outline' : 'default'}
+								size="sm"
+							>
+								{isTwoFAEnabled ? (
+									<>
+										<Icon name="lock-closed" className="mr-2 h-4 w-4" />
+										Manage
+									</>
+								) : (
+									<>
+										<Icon name="lock-open-1" className="mr-2 h-4 w-4" />
+										Enable
+									</>
+								)}
+							</Button>
+						</Link>
+					</div>
+				</CardContent>
+			</Card>
+
+			{/* Sessions Section */}
+			<Card>
+				<CardHeader>
+					<CardTitle className="flex items-center gap-2">
+						<Monitor className="h-5 w-5" />
+						Active Sessions
+					</CardTitle>
+					<CardDescription>
+						Manage your active sessions across devices
+					</CardDescription>
+				</CardHeader>
+				<CardContent>
+					<SessionsManager />
+				</CardContent>
+			</Card>
+		</div>
 	)
 }
 
@@ -169,40 +303,72 @@ async function signOutOfSessionsAction({ request, userId }: ProfileActionArgs) {
 	return json({ status: 'success' } as const)
 }
 
-function SignOutOfSessions() {
+function SessionsManager() {
 	const { user } = useLoaderData<typeof loader>()
 	const dc = useDoubleCheck()
-
 	const fetcher = useFetcher<typeof signOutOfSessionsAction>()
-	const otherSessionsCount = user._count.sessions - 1
+	const totalSessions = user._count.sessions
+	const otherSessionsCount = totalSessions - 1
 
 	return (
-		<div>
-			{otherSessionsCount ? (
-				<fetcher.Form method="POST">
-					<AuthenticityTokenInput />
-					<StatusButton
-						{...dc.getButtonProps({
-							type: 'submit',
-							name: 'intent',
-							value: signOutOfSessionsActionIntent,
-						})}
-						variant={dc.doubleCheck ? 'destructive' : 'default'}
-						status={
-							fetcher.state !== 'idle'
-								? 'pending'
-								: (fetcher.data?.status ?? 'idle')
-						}
-					>
-						<Icon name="person">
-							{dc.doubleCheck
-								? `Are you sure?`
-								: `Sign out of ${otherSessionsCount} other sessions`}
-						</Icon>
-					</StatusButton>
-				</fetcher.Form>
+		<div className="space-y-4">
+			<div className="flex items-center justify-between rounded-lg border p-4">
+				<div className="flex items-center gap-3">
+					<div className="flex h-10 w-10 items-center justify-center rounded-lg bg-green-100 dark:bg-green-900">
+						<Monitor className="h-5 w-5 text-green-600 dark:text-green-400" />
+					</div>
+					<div>
+						<p className="font-medium">Current Session</p>
+						<p className="text-sm text-muted-foreground">
+							This device - Active now
+						</p>
+					</div>
+				</div>
+				<span className="rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900 dark:text-green-300">
+					Active
+				</span>
+			</div>
+
+			{otherSessionsCount > 0 ? (
+				<div className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950">
+					<div className="flex items-center gap-3">
+						<div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-100 dark:bg-amber-900">
+							<Monitor className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+						</div>
+						<div>
+							<p className="font-medium">
+								{otherSessionsCount} other{' '}
+								{otherSessionsCount === 1 ? 'session' : 'sessions'}
+							</p>
+							<p className="text-sm text-muted-foreground">
+								Sign out of all other devices for security
+							</p>
+						</div>
+					</div>
+					<fetcher.Form method="POST">
+						<AuthenticityTokenInput />
+						<StatusButton
+							{...dc.getButtonProps({
+								type: 'submit',
+								name: 'intent',
+								value: signOutOfSessionsActionIntent,
+							})}
+							variant={dc.doubleCheck ? 'destructive' : 'outline'}
+							size="sm"
+							status={
+								fetcher.state !== 'idle'
+									? 'pending'
+									: (fetcher.data?.status ?? 'idle')
+							}
+						>
+							{dc.doubleCheck ? 'Confirm' : 'Sign Out All'}
+						</StatusButton>
+					</fetcher.Form>
+				</div>
 			) : (
-				<Icon name="person">This is your only session</Icon>
+				<p className="py-2 text-center text-sm text-muted-foreground">
+					This is your only active session
+				</p>
 			)}
 		</div>
 	)

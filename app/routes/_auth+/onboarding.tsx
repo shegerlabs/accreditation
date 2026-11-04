@@ -136,10 +136,13 @@ export async function action({ request }: ActionFunctionArgs) {
 		request.headers.get('cookie'),
 	)
 	const headers = new Headers()
+	const sessionExpiration = remember
+		? await getSessionExpirationDate()
+		: undefined
 	headers.append(
 		'set-cookie',
 		await sessionStorage.commitSession(cookieSession, {
-			expires: remember ? getSessionExpirationDate() : undefined,
+			expires: sessionExpiration,
 		}),
 	)
 	headers.append(

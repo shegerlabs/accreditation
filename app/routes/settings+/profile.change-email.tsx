@@ -6,7 +6,7 @@ import {
 	LoaderFunctionArgs,
 	redirect,
 } from '@remix-run/node'
-import { Form, useActionData, useLoaderData } from '@remix-run/react'
+import { Form, Link, useActionData, useLoaderData } from '@remix-run/react'
 import { InfoIcon } from 'lucide-react'
 import ReactDOMServer from 'react-dom/server'
 import { AuthenticityTokenInput } from 'remix-utils/csrf/react'
@@ -16,6 +16,7 @@ import { InputField } from '~/components/conform/InputField'
 import { EmailChangeEmail } from '~/components/email-change-email'
 import { ErrorList, Field, FieldError } from '~/components/forms'
 import { Alert, AlertDescription } from '~/components/ui/alert'
+import { Button } from '~/components/ui/button'
 import {
 	Card,
 	CardContent,
@@ -33,6 +34,7 @@ import { prisma } from '~/utils/db.server'
 import { sendEmailAzure } from '~/utils/email.server'
 import { checkHoneypot } from '~/utils/honeypot.server'
 import { useIsPending } from '~/utils/misc'
+import { getSetting, SettingKeys } from '~/utils/settings.server'
 import { EmailSchema } from '~/utils/validations'
 import {
 	prepareVerification,
@@ -86,8 +88,11 @@ export async function action({ request }: ActionFunctionArgs) {
 
 	const { email } = submission.value
 
+	const otpValidityMinutes = await getSetting<number>(
+		SettingKeys.OTP_VALIDITY_MINUTES,
+	)
 	const { verifyUrl, redirectTo, otp } = await prepareVerification({
-		period: 10 * 60,
+		period: otpValidityMinutes * 60,
 		request,
 		type: 'change-email',
 		target: userId,
@@ -166,14 +171,19 @@ export default function ChangeEmailRoute() {
 
 					<ErrorList errors={form.errors} id={form.errorId} />
 
-					<StatusButton
-						className="w-full"
-						status={isPending ? 'pending' : (form.status ?? 'idle')}
-						type="submit"
-						disabled={isPending}
-					>
-						{isPending ? 'Submitting...' : 'Change Email'}
-					</StatusButton>
+					<div className="flex gap-3">
+						<StatusButton
+							className="flex-1"
+							status={isPending ? 'pending' : (form.status ?? 'idle')}
+							type="submit"
+							disabled={isPending}
+						>
+							{isPending ? 'Submitting...' : 'Change Email'}
+						</StatusButton>
+						<Button variant="outline" className="flex-1" asChild>
+							<Link to="/settings/profile">Cancel</Link>
+						</Button>
+					</div>
 				</Form>
 			</CardContent>
 			<CardFooter>

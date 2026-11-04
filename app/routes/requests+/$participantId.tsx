@@ -1,25 +1,27 @@
 import { ActionFunctionArgs, json, LoaderFunctionArgs } from '@remix-run/node'
-import { Link, useLoaderData } from '@remix-run/react'
+import { Link, Outlet, useLoaderData } from '@remix-run/react'
 import { format } from 'date-fns'
 import {
 	ArrowLeft,
 	Briefcase,
 	Calendar,
-	CalendarCheck2,
-	FileImageIcon,
-	Flag,
+	CheckCircleIcon,
+	CircleDashedIcon,
+	FileCheck,
+	FileImage,
+	FileText,
 	Globe,
-	Mail,
-	MapPin,
-	PaperclipIcon,
 	Pencil,
-	Phone,
-	Users,
+	SkipForwardIcon,
+	User,
+	XCircleIcon,
 } from 'lucide-react'
+import { DocumentPreview } from '~/components/document-preview'
 import { Alert, AlertDescription, AlertTitle } from '~/components/ui/alert'
 import { Avatar, AvatarFallback, AvatarImage } from '~/components/ui/avatar'
+import { Badge } from '~/components/ui/badge'
 import { Button } from '~/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '~/components/ui/card'
+import { Card, CardContent } from '~/components/ui/card'
 import { requireUserWithRoles } from '~/utils/auth.server'
 import { validateCSRF } from '~/utils/csrf.server'
 import { prisma } from '~/utils/db.server'
@@ -31,6 +33,7 @@ type ParticipantActionArgs = {
 	request: Request
 	participantId: string
 	formData: FormData
+	userId: string
 }
 
 export async function loader({ params, request }: LoaderFunctionArgs) {
@@ -41,6 +44,11 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
 		where: { id: participantId },
 		include: {
 			documents: true,
+			title: {
+				select: {
+					name: true,
+				},
+			},
 			country: {
 				select: {
 					name: true,
@@ -62,7 +70,29 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
 			},
 			approvals: {
 				orderBy: {
-					createdAt: 'desc',
+					createdAt: 'asc',
+				},
+				select: {
+					id: true,
+					result: true,
+					remarks: true,
+					createdAt: true,
+					step: {
+						select: {
+							name: true,
+							action: true,
+							role: {
+								select: {
+									name: true,
+								},
+							},
+						},
+					},
+					user: {
+						select: {
+							username: true,
+						},
+					},
 				},
 			},
 			step: {
@@ -83,6 +113,13 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
 		status: 403,
 	})
 
+	// Check if user has focal role
+	const userWithRoles = await prisma.user.findUnique({
+		where: { id: user.id },
+		select: { roles: { select: { name: true } } },
+	})
+	const isFocal = userWithRoles?.roles.some(r => r.name === 'focal') ?? false
+
 	const generalInfo = {
 		id: participant.id,
 		tenantId: participant.tenantId,
@@ -90,7 +127,7 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
 		participantTypeId: participant.participantTypeId,
 		participantType: participant.participantType.name,
 		gender: participant.gender,
-		title: participant.title,
+		title: participant.title.name,
 		firstName: participant.firstName,
 		familyName: participant.familyName,
 		dateOfBirth: participant.dateOfBirth
@@ -121,17 +158,6 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
 		},
 	})
 
-	const wishlistInfo = {
-		needsVisa: participant.needsVisa,
-		needsCarPass: participant.needsCarPass,
-		vehicleType: participant.vehicleType,
-		vehiclePlateNumber: participant.vehiclePlateNumber,
-		needsCarFromOrganizer: participant.needsCarFromOrganizer,
-		flightNumber: participant.flightNumber,
-		arrivalDate: participant.arrivalDate,
-		meetings: participant.wishList?.split(','),
-	}
-
 	const photo = participant?.documents.find(doc => doc.documentType === 'PHOTO')
 	const passport = participant?.documents.find(
 		doc => doc.documentType === 'PASSPORT',
@@ -140,33 +166,71 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
 		doc => doc.documentType === 'LETTER',
 	)
 
-	const approvals = participant?.approvals.map(approval => ({
-		id: approval.id,
-		result: approval.result,
-		remarks: approval.remarks,
-	}))
+	const SYSTEM_STEPS = ['Request Received', 'Review Request']
+	const isSystemStep = (stepName: string) =>
+		SYSTEM_STEPS.some(name =>
+			stepName.toLowerCase().includes(name.toLowerCase()),
+		)
 
-	const step =
-		participant?.step.role.name === 'reviewer'
-			? 'focal person'
-			: participant?.step.role.name
+	const approvals = participant?.approvals.map(approval => {
+		const isBypass = approval.remarks?.includes('Bypassed')
+		const isAdminReject = approval.remarks?.includes(
+			'Rejected by administrator',
+		)
+
+		return {
+			id: approval.id,
+			result: approval.result,
+			remarks: approval.remarks,
+			createdAt: approval.createdAt,
+			stepName: isBypass
+				? 'Admin Bypass'
+				: isAdminReject
+					? 'Admin Reject'
+					: approval.step.name,
+			stepAction: isBypass
+				? 'BYPASS'
+				: isAdminReject
+					? 'REJECT'
+					: approval.step.action,
+			roleName:
+				isBypass || isAdminReject
+					? 'Admin'
+					: isSystemStep(approval.step.name)
+						? 'System'
+						: approval.step.role.name,
+			username:
+				isBypass || isAdminReject
+					? approval.user?.username || 'Admin'
+					: isSystemStep(approval.step.name)
+						? 'System'
+						: approval.user?.username || 'System',
+		}
+	})
 
 	return json({
 		general: generalInfo,
 		professional: professionalInfo,
-		wishlist: wishlistInfo,
 		photo,
 		passport,
 		letter,
 		meetings,
 		approvals,
 		status: participant.status,
-		step,
+		isFocal,
+		nextStep: {
+			name: participant.step.name,
+			action: participant.step.action,
+			roleName:
+				participant.step.role.name === 'reviewer'
+					? 'Focal Person'
+					: participant.step.role.name,
+		},
 	})
 }
 
 export async function action({ request, params }: ActionFunctionArgs) {
-	await requireUserWithRoles(request, ['user', 'focal'])
+	const user = await requireUserWithRoles(request, ['user', 'focal'])
 	const { participantId } = params
 	invariantResponse(participantId, 'Participant not found', { status: 404 })
 
@@ -175,7 +239,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
 	const intent = formData.get('intent')
 	switch (intent) {
 		case 'delete': {
-			return deleteParticipantAction({ request, participantId, formData })
+			return deleteParticipantAction({
+				request,
+				participantId,
+				formData,
+				userId: user.id,
+			})
 		}
 		default: {
 			throw new Response(`Invalid intent "${intent}"`, { status: 400 })
@@ -185,7 +254,21 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
 async function deleteParticipantAction({
 	participantId,
+	userId,
 }: ParticipantActionArgs) {
+	// SECURITY: Verify ownership before deletion to prevent IDOR attacks
+	const participant = await prisma.participant.findUnique({
+		where: { id: participantId },
+		select: { userId: true },
+	})
+
+	invariantResponse(participant, 'Participant not found', { status: 404 })
+	invariantResponse(
+		participant.userId === userId,
+		'Unauthorized - you can only delete your own participants',
+		{ status: 403 },
+	)
+
 	await prisma.participant.delete({
 		where: { id: participantId },
 	})
@@ -197,18 +280,45 @@ async function deleteParticipantAction({
 	})
 }
 
+// Format action to past tense for completed actions
+function formatActionPastTense(action: string): string {
+	const actionMap: Record<string, string> = {
+		APPROVE: 'Approved',
+		REJECT: 'Rejected',
+		BYPASS: 'Bypassed',
+		NOTIFY: 'Notified',
+		PRINT: 'Printed',
+		ARCHIVE: 'Archived',
+		CANCEL: 'Cancelled',
+	}
+	return actionMap[action] || action
+}
+
+// Format role name to user-friendly label (hides actual user identity)
+function formatRoleName(roleName: string): string {
+	const roleMap: Record<string, string> = {
+		reviewer: 'Focal Person',
+		validator: 'Validator',
+		printer: 'Printer',
+		admin: 'Administrator',
+		Admin: 'Administrator',
+		System: 'System',
+	}
+	return roleMap[roleName] || roleName
+}
+
 export default function ParticipantProfile() {
 	const {
 		general,
 		professional,
-		wishlist,
 		photo,
 		passport,
 		letter,
 		meetings,
 		approvals,
 		status,
-		step,
+		isFocal,
+		nextStep,
 	} = useLoaderData<typeof loader>()
 
 	const photoLink = getParticipantDocumentFileSrc(photo?.id ?? '')
@@ -216,209 +326,388 @@ export default function ParticipantProfile() {
 	const letterLink = getParticipantDocumentFileSrc(letter?.id ?? '')
 	const user = useOptionalUser()
 
+	const documents = [
+		{
+			type: 'PHOTO',
+			label: 'Photo',
+			icon: FileImage,
+			link: photoLink,
+			doc: photo,
+			color: 'bg-violet-500',
+		},
+		{
+			type: 'PASSPORT',
+			label: 'Passport',
+			icon: FileText,
+			link: passportLink,
+			doc: passport,
+			color: 'bg-blue-500',
+		},
+		{
+			type: 'LETTER',
+			label: 'Letter',
+			icon: FileCheck,
+			link: letterLink,
+			doc: letter,
+			color: 'bg-emerald-500',
+		},
+	]
+
+	// Check if the most recent approval is a rejection
+	const lastApproval = approvals?.[approvals.length - 1]
+	const isRejected = status === 'REJECTED' && lastApproval?.result === 'FAILURE'
+
 	return (
-		<div className="container mx-auto px-4">
-			{approvals?.[0]?.result === 'FAILURE' && step === 'first-validator' && (
-				<Alert variant="destructive">
+		<div>
+			{/* Outlet for dialogs */}
+			<Outlet />
+
+			{/* Rejection Alert */}
+			{isRejected && (
+				<Alert variant="destructive" className="mb-4">
 					<AlertTitle>Request Rejected</AlertTitle>
 					<AlertDescription>
-						{(approvals[0].remarks ?? '').replace(/^Request Rejected:\s*/, '')}
+						{(lastApproval?.remarks ?? '').replace(/^Request Rejected:\s*/, '')}
 					</AlertDescription>
 				</Alert>
 			)}
-			<div className="px-4 py-8 sm:px-4 lg:px-4">
-				<div className="mb-6 flex flex-col sm:flex-row sm:items-center">
-					<Avatar className="h-24 w-24 ring-4 ring-gray-200 sm:h-32 sm:w-32">
-						<AvatarImage src={photoLink} alt={general.firstName} />
-						<AvatarFallback>RC</AvatarFallback>
-					</Avatar>
-					<div className="mt-4 flex-grow sm:ml-6 sm:mt-0">
-						<h1 className="text-3xl font-bold text-gray-900">
-							{general.firstName} {general.familyName} ({general.title})
-						</h1>
-						<p className="text-xl text-gray-600">{professional.jobTitle}</p>
-					</div>
-					<div className="mt-4 flex space-x-2 sm:mt-0">
-						{userHasPermission(user, 'update:participant:own') &&
-							status === 'REJECTED' && (
-								<Button size="sm" variant="outline" asChild>
-									<Link to={`/requests/${general.id}/edit`}>
-										<Pencil className="h-4 w-4" />
-									</Link>
-								</Button>
-							)}
-						<Button size="sm" variant="outline" asChild>
-							<Link to={`/requests`}>
-								<ArrowLeft className="h-4 w-4" />
-							</Link>
-						</Button>
-					</div>
-				</div>
 
-				<div className="grid grid-cols-1 gap-6 md:grid-cols-3">
-					<Card className="col-span-2">
-						<CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-							<CardTitle className="text-lg font-semibold">
-								Participant Details
-							</CardTitle>
-						</CardHeader>
-						<CardContent>
-							<div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-								<div className="space-y-4">
-									<InfoItem
-										icon={<Briefcase aria-hidden="true" />}
-										label="Gender"
-										value={general.gender}
-									/>
-									<InfoItem
-										icon={<Users aria-hidden="true" />}
-										label="Organization"
-										value={professional.organization}
-									/>
-									<InfoItem
-										icon={<MapPin aria-hidden="true" />}
-										label="City"
-										value={professional.city}
-									/>
-									<InfoItem
-										icon={<Flag aria-hidden="true" />}
-										label="Country"
-										value={professional.country}
-									/>
-									<InfoItem
-										icon={<Globe aria-hidden="true" />}
-										label="Nationality"
-										value={general.nationality}
-									/>
-									<InfoItem
-										icon={<Calendar aria-hidden="true" />}
-										label="Date of Birth"
-										value={general.dateOfBirth}
-									/>
+			{/* Header Card */}
+			<div className="relative overflow-hidden rounded-xl bg-gradient-to-br from-emerald-400 via-green-400 to-teal-400 p-[1px] shadow-sm">
+				<div className="absolute inset-0 bg-gradient-to-br from-emerald-400 via-green-400 to-teal-400 opacity-10 blur-xl" />
+				<div className="relative rounded-[10px] bg-white/95 backdrop-blur-sm">
+					<div className="absolute right-0 top-0 h-40 w-40 -translate-y-10 translate-x-10 rounded-full bg-gradient-to-br from-emerald-200/40 to-green-200/40 blur-2xl" />
+					<div className="absolute bottom-0 left-0 h-32 w-32 -translate-x-10 translate-y-10 rounded-full bg-gradient-to-tr from-green-200/40 to-teal-200/40 blur-2xl" />
+
+					<div className="relative p-6">
+						<div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
+							<div className="flex items-center gap-4">
+								<div className="relative">
+									<div className="absolute -inset-1 rounded-full bg-gradient-to-br from-emerald-500 via-green-500 to-teal-500 opacity-75 blur-sm" />
+									<Avatar className="relative h-20 w-20 ring-4 ring-white">
+										<AvatarImage src={photoLink} alt={general.firstName} />
+										<AvatarFallback className="bg-gradient-to-br from-emerald-100 to-green-100 text-xl font-semibold text-green-700">
+											{general.firstName[0]}
+											{general.familyName[0]}
+										</AvatarFallback>
+									</Avatar>
 								</div>
-								<div className="space-y-4">
-									<InfoItem
-										icon={<Mail aria-hidden="true" />}
-										label="Email"
-										value={professional.email}
-									/>
-									<InfoItem
-										icon={<Phone aria-hidden="true" />}
-										label="Telephone"
-										value={professional.telephone ?? 'N/A'}
-									/>
-									<InfoItem
-										icon={<Globe aria-hidden="true" />}
-										label="Preferred Language"
-										value={professional.preferredLanguage ?? 'N/A'}
-									/>
-									<InfoItem
-										icon={<FileImageIcon aria-hidden="true" />}
-										label="Passport Number"
-										value={general.passportNumber ?? 'N/A'}
-									/>
-									<InfoItem
-										icon={<CalendarCheck2 aria-hidden="true" />}
-										label="Passport Expiry"
-										value={
-											general.passportExpiry
-												? format(new Date(general.passportExpiry), 'PP')
-												: 'N/A'
-										}
-									/>
+								<div>
+									<h1 className="text-2xl font-bold text-slate-800">
+										{general.title} {general.firstName} {general.familyName}
+									</h1>
+									<p className="font-medium text-slate-600">
+										{professional.jobTitle}
+									</p>
+									<p className="text-sm text-slate-500">
+										{professional.organization}
+									</p>
 								</div>
 							</div>
-						</CardContent>
-					</Card>
 
-					<div className="space-y-6">
-						{/* <Card>
-							<CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-								<CardTitle className="text-lg font-semibold">
-									Current Status
-								</CardTitle>
-							</CardHeader>
-							<CardContent>
-								<div className="flex w-full">
-									<span className="inline-flex w-full items-center justify-center rounded-full bg-emerald-50 px-4 py-2 text-lg font-medium text-emerald-700 ring-1 ring-inset ring-emerald-700/10">
-										{step}
-									</span>
-								</div>
-							</CardContent>
-						</Card> */}
-						<Card>
-							<CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-								<CardTitle className="text-lg font-semibold">
-									Documents
-								</CardTitle>
-							</CardHeader>
-							<CardContent className="space-y-4">
-								{[
-									{ type: 'PHOTO', link: photoLink, doc: photo },
-									{ type: 'PASSPORT', link: passportLink, doc: passport },
-									{ type: 'LETTER', link: letterLink, doc: letter },
-								].map(({ type, link, doc }) => (
-									<div key={type} className="flex-1">
+							{/* Action Buttons */}
+							<div className="flex flex-wrap items-center gap-2">
+								<Button
+									size="sm"
+									variant="outline"
+									className="border-slate-300 hover:bg-slate-100"
+									asChild
+								>
+									<Link to="/requests">
+										<ArrowLeft className="mr-2 h-4 w-4" />
+										Back
+									</Link>
+								</Button>
+								{userHasPermission(user, 'update:participant:own') &&
+									status === 'REJECTED' && (
+										<Button size="sm" variant="default" asChild>
+											<Link to={`/requests/${general.id}/edit`}>
+												<Pencil className="mr-1.5 h-4 w-4" />
+												Edit
+											</Link>
+										</Button>
+									)}
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+
+			{/* Info Grid */}
+			<div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+				<InfoCard
+					icon={User}
+					label="Personal"
+					items={[
+						{ label: 'Gender', value: general.gender },
+						{ label: 'Date of Birth', value: general.dateOfBirth },
+						{ label: 'Nationality', value: general.nationality },
+					]}
+				/>
+				<InfoCard
+					icon={Briefcase}
+					label="Professional"
+					items={[
+						{ label: 'Organization', value: professional.organization },
+						{ label: 'Job Title', value: professional.jobTitle },
+						{ label: 'City', value: professional.city },
+					]}
+				/>
+				<InfoCard
+					icon={Globe}
+					label="Contact"
+					items={[
+						{ label: 'Email', value: professional.email ?? 'N/A' },
+						{ label: 'Phone', value: professional.telephone ?? 'N/A' },
+						{ label: 'Country', value: professional.country },
+					]}
+				/>
+				<InfoCard
+					icon={FileText}
+					label="Passport"
+					items={[
+						{ label: 'Number', value: general.passportNumber ?? 'N/A' },
+						{
+							label: 'Expiry',
+							value: general.passportExpiry
+								? format(new Date(general.passportExpiry), 'PP')
+								: 'N/A',
+						},
+						{
+							label: 'Language',
+							value: professional.preferredLanguage ?? 'N/A',
+						},
+					]}
+				/>
+			</div>
+
+			{/* Documents and Meetings Row */}
+			<div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+				{/* Documents Card */}
+				<Card>
+					<CardContent className="p-4">
+						<div className="mb-3 flex items-center gap-2">
+							<div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100">
+								<FileImage className="h-4 w-4 text-slate-600" />
+							</div>
+							<span className="font-semibold text-slate-700">Documents</span>
+						</div>
+						<div className="grid grid-cols-1 gap-3 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
+							{documents.map(
+								({ type, label, icon: Icon, link, doc, color }) => (
+									<div key={type}>
 										{doc ? (
-											<a
-												href={link}
-												className="flex items-center gap-2 space-x-2 font-medium text-green-600 hover:text-green-500"
-											>
-												<PaperclipIcon className="h-4 w-4" />
-												{type}
-											</a>
+											<DocumentPreview
+												title={`${general.firstName} ${general.familyName} - ${label}`}
+												documentUrl={link}
+												contentType={doc.contentType}
+												onDownload={() => {
+													const downloadLink = document.createElement('a')
+													downloadLink.href = link
+													downloadLink.download = `${label.toLowerCase()}.${doc.contentType.split('/')[1] || 'file'}`
+													downloadLink.click()
+												}}
+												type={label}
+												icon={Icon}
+												color={color}
+											/>
 										) : (
-											<div className="flex items-center gap-2 space-x-2 font-medium text-gray-400">
-												<PaperclipIcon className="h-4 w-4" />
-												<span>{type} (Missing)</span>
+											<div className="flex items-center gap-3 rounded-lg border-2 border-dashed border-slate-200 bg-slate-50/50 px-3 py-2 text-slate-400">
+												<div
+													className={`flex h-8 w-8 items-center justify-center rounded-lg ${color} opacity-30`}
+												>
+													<Icon className="h-4 w-4 text-white" />
+												</div>
+												<div>
+													<p className="text-sm font-medium">{label}</p>
+													<p className="text-xs">Not uploaded</p>
+												</div>
 											</div>
 										)}
 									</div>
-								))}
-								<div>
-									<h3 className="text-lg font-medium text-gray-900">
-										Wishes to Participate
-									</h3>
-									<ul className="list-disc pl-5">
-										{meetings?.map(meeting => (
-											<li key={meeting.id}>{meeting.name}</li>
-										))}
-									</ul>
-								</div>
-								<div>
-									<h3 className="text-lg font-medium text-gray-900">
-										Participant Type
-									</h3>
+								),
+							)}
+						</div>
+					</CardContent>
+				</Card>
 
-									<ul className="list-disc pl-5">
-										<li>{general.participantType}</li>
-									</ul>
+				{/* Accreditation Details Card */}
+				<Card>
+					<CardContent className="p-4">
+						<div className="mb-3 flex items-center justify-between">
+							<div className="flex items-center gap-2">
+								<div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100">
+									<Calendar className="h-4 w-4 text-slate-600" />
 								</div>
-							</CardContent>
-						</Card>
-					</div>
-				</div>
+								<span className="font-semibold text-slate-700">
+									Accreditation Details
+								</span>
+							</div>
+							{isFocal && (
+								<Button
+									size="sm"
+									variant="outline"
+									className="h-7 px-2 text-xs"
+									asChild
+								>
+									<Link to={`/requests/${general.id}/edit-details`}>
+										<Pencil className="mr-1 h-3 w-3" />
+										Edit
+									</Link>
+								</Button>
+							)}
+						</div>
+						<div className="space-y-2">
+							<div className="flex justify-between text-sm">
+								<span className="text-slate-500">Participant Type</span>
+								<Badge variant="secondary" className="bg-emerald-50 text-emerald-700">
+									{general.participantType}
+								</Badge>
+							</div>
+							<div className="flex justify-between text-sm">
+								<span className="text-slate-500">Meetings</span>
+								{meetings && meetings.length > 0 ? (
+									<span className="font-medium text-slate-700">
+										{meetings.map(m => m.name).join(', ')}
+									</span>
+								) : (
+									<span className="text-slate-400">None selected</span>
+								)}
+							</div>
+						</div>
+					</CardContent>
+				</Card>
+			</div>
+
+			{/* Approval History */}
+			<div className="mt-6">
+				<h2 className="mb-4 text-lg font-semibold text-slate-800">
+					Request History
+				</h2>
+				<Card>
+					<CardContent className="p-4">
+						{approvals && approvals.length > 0 ? (
+							<div className="space-y-2">
+								{approvals.slice(0, 5).map(approval => (
+									<div
+										key={approval.id}
+										className="flex items-center justify-between rounded-lg border bg-white p-3 text-sm shadow-sm"
+									>
+										<div className="flex items-center gap-3">
+											{approval.result === 'SUCCESS' && (
+												<CheckCircleIcon className="h-5 w-5 text-emerald-500" />
+											)}
+											{approval.result === 'FAILURE' && (
+												<XCircleIcon className="h-5 w-5 text-red-500" />
+											)}
+											{approval.result === 'SKIPPED' && (
+												<SkipForwardIcon className="h-5 w-5 text-amber-500" />
+											)}
+											<div>
+												<span className="font-medium text-slate-800">
+													{approval.stepName}
+												</span>
+												<span className="ml-2 text-slate-500">
+													({formatActionPastTense(approval.stepAction)})
+												</span>
+											</div>
+										</div>
+										<div className="text-right text-xs text-slate-500">
+											<div className="font-medium">
+												{formatRoleName(approval.roleName)}
+											</div>
+											<div>
+												{format(new Date(approval.createdAt), 'MMM d, HH:mm')}
+											</div>
+										</div>
+									</div>
+								))}
+
+								{approvals.length > 5 && (
+									<p className="pt-2 text-center text-sm text-slate-500">
+										+{approvals.length - 5} more entries
+									</p>
+								)}
+
+								{/* Next Step */}
+								{status === 'INPROGRESS' && (
+									<div className="mt-4 flex items-center justify-between rounded-lg border-2 border-dashed border-blue-200 bg-blue-50/50 p-3 text-sm">
+										<div className="flex items-center gap-3">
+											<CircleDashedIcon className="h-5 w-5 text-blue-500" />
+											<div>
+												<span className="font-medium text-blue-700">
+													{nextStep.name}
+												</span>
+												<span className="ml-2 text-blue-500">
+													({nextStep.action})
+												</span>
+											</div>
+										</div>
+										<div className="text-right text-xs text-blue-600">
+											<div className="font-medium">PENDING</div>
+											<div>Waiting: {nextStep.roleName}</div>
+										</div>
+									</div>
+								)}
+							</div>
+						) : (
+							<div className="space-y-2">
+								<p className="text-sm text-slate-500">No history yet</p>
+								{status === 'INPROGRESS' && (
+									<div className="flex items-center justify-between rounded-lg border-2 border-dashed border-blue-200 bg-blue-50/50 p-3 text-sm">
+										<div className="flex items-center gap-3">
+											<CircleDashedIcon className="h-5 w-5 text-blue-500" />
+											<div>
+												<span className="font-medium text-blue-700">
+													{nextStep.name}
+												</span>
+												<span className="ml-2 text-blue-500">
+													({nextStep.action})
+												</span>
+											</div>
+										</div>
+										<div className="text-right text-xs text-blue-600">
+											<div className="font-medium">PENDING</div>
+											<div>Waiting: {nextStep.roleName}</div>
+										</div>
+									</div>
+								)}
+							</div>
+						)}
+					</CardContent>
+				</Card>
 			</div>
 		</div>
 	)
 }
 
-function InfoItem({
-	icon,
+function InfoCard({
+	icon: Icon,
 	label,
-	value,
+	items,
 }: {
-	icon: React.ReactNode
+	icon: React.ElementType
 	label: string
-	value: string
+	items: { label: string; value: string }[]
 }) {
 	return (
-		<div className="flex items-center space-x-2">
-			<div className="flex-shrink-0 text-gray-400">{icon}</div>
-			<div>
-				<dt className="text-sm font-medium text-gray-500">{label}</dt>
-				<dd className="mt-1 text-sm text-gray-900">{value}</dd>
-			</div>
-		</div>
+		<Card className="transition-shadow hover:shadow-md">
+			<CardContent className="p-4">
+				<div className="mb-3 flex items-center gap-2">
+					<div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100">
+						<Icon className="h-4 w-4 text-slate-600" />
+					</div>
+					<span className="font-semibold text-slate-700">{label}</span>
+				</div>
+				<div className="space-y-2">
+					{items.map(item => (
+						<div key={item.label} className="flex justify-between text-sm">
+							<span className="text-slate-500">{item.label}</span>
+							<span className="font-medium text-slate-700">{item.value}</span>
+						</div>
+					))}
+				</div>
+			</CardContent>
+		</Card>
 	)
 }

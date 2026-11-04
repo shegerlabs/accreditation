@@ -30,7 +30,7 @@ const VerificationTypeSchema = z.enum(types)
 export type VerificationTypes = z.infer<typeof VerificationTypeSchema>
 
 export const VerifySchema = z.object({
-	[codeQueryParam]: z.string().min(6).max(6),
+	[codeQueryParam]: z.string().trim().min(6).max(6),
 	[typeQueryParam]: VerificationTypeSchema,
 	[targetQueryParam]: z.string(),
 	[redirectToQueryParam]: z.string().optional(),
@@ -44,18 +44,17 @@ export type VerifyFunctionArgs = {
 
 export async function loader({ request }: LoaderFunctionArgs) {
 	const params = new URL(request.url).searchParams
-	if (!params.has(codeQueryParam)) {
-		// we don't want to show an error message on page load if the otp hasn't be prefilled in yet, so we'll send a response with an empty submission.
-		return json({
-			status: 'idle',
-			submission: {
-				payload: Object.fromEntries(params) as Record<string, unknown>,
-				error: {} as Record<string, Array<string>>,
-			},
-		} as const)
-	}
-
-	return validateRequest(request, params)
+	// Never auto-validate on GET requests. Email security scanners (Microsoft
+	// Safe Links, Proofpoint, etc.) pre-fetch links which would consume the OTP
+	// and delete the verification record before the real user can use it.
+	// Instead, just pre-fill the code field and let the user submit via POST.
+	return json({
+		status: 'idle',
+		submission: {
+			payload: Object.fromEntries(params) as Record<string, unknown>,
+			error: {} as Record<string, Array<string>>,
+		},
+	} as const)
 }
 
 export async function action({ request }: ActionFunctionArgs) {
