@@ -299,8 +299,8 @@ export default function App() {
 																	className={({ isActive }) =>
 																		`flex items-center gap-3 rounded-lg px-3 py-2 transition-colors ${
 																			isActive
-																				? 'bg-muted text-primary'
-																				: 'text-muted-foreground hover:bg-muted hover:text-primary'
+																				? 'bg-primary text-primary-foreground'
+																				: 'text-muted-foreground hover:bg-muted hover:text-foreground'
 																		}`
 																	}
 																>
