@@ -154,6 +154,7 @@ enum AuditEntityType {
   SESSION
   SYSTEM
   BACKUP
+  EMAIL_TEMPLATE
   OTHER
 }
 
@@ -235,6 +236,8 @@ model User {
 
   sessions        Session[]
   approvals       Approval[]
+  emailTemplates  EmailTemplate[]
+  emailLogs       EmailLog[]
   participants    Participant[]
   auditLogs       AuditLog[]
   eventAccess     UserEventAccess[]
@@ -417,6 +420,7 @@ model Event {
   participants Participant[]
   templates    Template[]
   userAccess   UserEventAccess[]
+  emailTemplates EmailTemplate[]
 
   @@unique([tenantId, name])
   @@unique([tenantId, name, startDate, endDate])
@@ -732,6 +736,7 @@ model Participant {
   deletedAt             DateTime?
   approvals             Approval[]
   documents             ParticipantDocument[]
+  emailLogs             EmailLog[]
 
   @@unique([tenantId, eventId, passportNumber])
   @@index([deletedAt])
@@ -908,4 +913,56 @@ model CustomReport {
   @@unique([tenantId, name])
   @@index([tenantId])
   @@index([createdById])
+}
+
+enum EmailTrigger {
+  REQUEST_RECEIVED
+  RETURNED_FOR_CORRECTION
+  BADGE_READY
+  BADGE_COLLECTED
+}
+
+enum EmailStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+// Per-event override of a participant email. Events without a row for a
+// trigger use the built-in default in app/utils/participant-email.ts.
+model EmailTemplate {
+  id          String       @id @default(cuid())
+  eventId     String
+  event       Event        @relation(fields: [eventId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  trigger     EmailTrigger
+  subject     String
+  body        String
+  enabled     Boolean      @default(true)
+  updatedById String?
+  updatedBy   User?        @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@unique([eventId, trigger])
+}
+
+// One row per recipient per email sent to a participant or their focal point.
+// subject and body hold the rendered text, so a resend repeats exactly what was sent.
+model EmailLog {
+  id            String       @id @default(cuid())
+  participantId String
+  participant   Participant  @relation(fields: [participantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  trigger       EmailTrigger
+  recipient     String
+  subject       String
+  body          String
+  status        EmailStatus  @default(PENDING)
+  error         String?
+  triggeredById String?
+  triggeredBy   User?        @relation(fields: [triggeredById], references: [id], onDelete: SetNull)
+  sentAt        DateTime?
+  createdAt     DateTime     @default(now())
+
+  @@index([participantId, createdAt])
+  @@index([status])
 }

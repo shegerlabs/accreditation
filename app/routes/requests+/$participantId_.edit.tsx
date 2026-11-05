@@ -46,6 +46,7 @@ import {
 } from '~/utils/file-validation.server'
 import { checkHoneypot } from '~/utils/honeypot.server'
 import {
+	getDomainUrl,
 	getParticipantDocumentFileSrc,
 	invariantResponse,
 	useIsPending,
@@ -55,6 +56,7 @@ import { redirectWithToast } from '~/utils/toast.server'
 import { getSetting, SettingKeys } from '~/utils/settings.server'
 import { xssTransform } from '~/utils/validations'
 import { getAllowedParticipantTypes, isClosedSessionQuotaAvailable, validateQuotaForTypeChange } from '~/utils/quota.server'
+import { sendParticipantEmail } from '~/utils/participant-email.server'
 import { processParticipant } from '~/utils/workflow.server'
 import { FormCard } from '~/components/form-card'
 
@@ -680,6 +682,13 @@ export async function action({ request, params }: ActionFunctionArgs) {
 		Action.APPROVE,
 		'Updated Request Reviewed',
 	)
+
+	void sendParticipantEmail({
+		participantId,
+		trigger: 'REQUEST_RECEIVED',
+		triggeredById: user.id,
+		portalUrl: getDomainUrl(request),
+	})
 
 	// Upload new documents to Azure
 	const newAttachmentsPromises = newDocuments.map(attachment =>

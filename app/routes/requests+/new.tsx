@@ -21,7 +21,6 @@ import {
 } from '@remix-run/react'
 import { AlertCircle, CheckCircle, Eye } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import ReactDOMServer from 'react-dom/server'
 import { AuthenticityTokenInput } from 'remix-utils/csrf/react'
 import { HoneypotInputs } from 'remix-utils/honeypot/react'
 import { z } from 'zod'
@@ -31,7 +30,6 @@ import { CameraFileInputField } from '~/components/conform/CameraFileInputField'
 import { FileInputField } from '~/components/conform/FileInputField'
 import { InputField } from '~/components/conform/InputField'
 import { SelectField } from '~/components/conform/SelectField'
-import { RegistrationEmail } from '~/components/registration-confirmation'
 import { ErrorList, Field, FieldError } from '~/components/forms'
 import { Alert, AlertDescription } from '~/components/ui/alert'
 import { Badge } from '~/components/ui/badge'
@@ -56,13 +54,13 @@ import { auditRequest } from '~/utils/audit.server'
 import { requireUserWithRoles } from '~/utils/auth.server'
 import { validateCSRF } from '~/utils/csrf.server'
 import { prisma } from '~/utils/db.server'
-import { sendEmailAzure } from '~/utils/email.server'
 import {
 	validateDocumentFile,
 	validatePhotoFile,
 } from '~/utils/file-validation.server'
 import { checkHoneypot } from '~/utils/honeypot.server'
 import { getDomainUrl, invariantResponse, useIsPending } from '~/utils/misc'
+import { sendParticipantEmail } from '~/utils/participant-email.server'
 import { createRegistrationCode } from '~/utils/registration.server'
 import { uploadFile } from '~/utils/storage.server'
 import { redirectWithToast } from '~/utils/toast.server'
@@ -1204,33 +1202,6 @@ export async function action({ request }: ActionFunctionArgs) {
 		},
 	})
 
-	// Send confirmation email only if participant has an email
-	// (focal users may register participants without email addresses)
-	if (participant.email) {
-		const domainUrl = getDomainUrl(request)
-		const lookupUrl = `${domainUrl}/requests/${participant.id}`
-
-		const event = await prisma.event.findFirst({
-			where: { status: 'PUBLISHED' },
-			select: { name: true },
-		})
-		invariantResponse(event, 'Event not found', { status: 404 })
-
-		void sendEmailAzure({
-			to: participant.email,
-			subject: 'Event Registration Code',
-			plainText: `Your registration code is: ${registrationCode}`,
-			html: ReactDOMServer.renderToString(
-				<RegistrationEmail
-					participantName={`${participant.firstName} ${participant.familyName}`}
-					registrationCode={registrationCode}
-					eventName={event.name}
-					lookupUrl={lookupUrl}
-				/>,
-			),
-		})
-	}
-
 	// Process through workflow
 	await processParticipant(
 		participant.id,
@@ -1245,6 +1216,13 @@ export async function action({ request }: ActionFunctionArgs) {
 		Action.APPROVE,
 		'Initial Request Reviewed',
 	)
+
+	void sendParticipantEmail({
+		participantId: participant.id,
+		trigger: 'REQUEST_RECEIVED',
+		triggeredById: user.id,
+		portalUrl: getDomainUrl(request),
+	})
 
 	// Upload documents to Azure
 	const newAttachmentsPromises = newDocuments.map(attachment =>
