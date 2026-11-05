@@ -11,7 +11,7 @@ import {
 	useActionData,
 	useLoaderData,
 } from '@remix-run/react'
-import { AlertCircle, Camera, Eye, FileText, Image as ImageIcon, Info } from 'lucide-react'
+import { AlertCircle, Camera, Eye, FileText, Image as ImageIcon } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { AuthenticityTokenInput } from 'remix-utils/csrf/react'
 import { HoneypotInputs } from 'remix-utils/honeypot/react'
@@ -37,12 +37,6 @@ import {
 	CardContent,
 } from '~/components/ui/card'
 import { Label } from '~/components/ui/label'
-import {
-	Tooltip,
-	TooltipContent,
-	TooltipProvider,
-	TooltipTrigger,
-} from '~/components/ui/tooltip'
 import { requireUserWithRoles } from '~/utils/auth.server'
 import { validateCSRF } from '~/utils/csrf.server'
 import { prisma } from '~/utils/db.server'
@@ -1011,22 +1005,17 @@ function DocumentUploadField({
 				<InputField meta={documentFields.id} type="hidden" />
 				<InputField meta={documentFields.documentType} type="hidden" />
 
-				{/* Document Header with Tooltip */}
-				<div className="mb-3 flex items-center gap-2">
-					<DocumentIcon className="h-5 w-5 text-primary" />
-					<h3 className="font-semibold text-base">
-						{getDocumentTypeName()}
-					</h3>
-					<TooltipProvider>
-						<Tooltip>
-							<TooltipTrigger asChild>
-								<Info className="h-4 w-4 cursor-help text-muted-foreground" />
-							</TooltipTrigger>
-							<TooltipContent>
-								<p>{getDocumentHint()}</p>
-							</TooltipContent>
-						</Tooltip>
-					</TooltipProvider>
+				{/* Document Header */}
+				<div className="mb-3">
+					<div className="flex items-center gap-2">
+						<DocumentIcon className="h-5 w-5 text-primary" />
+						<h3 className="font-semibold text-base">
+							{getDocumentTypeName()}
+						</h3>
+					</div>
+					<p className="mt-1 text-xs text-muted-foreground">
+						{getDocumentHint()}
+					</p>
 				</div>
 
 				{/* Two Column Layout - Current doc 20%, Upload section 80% */}
@@ -1292,7 +1281,13 @@ export default function EditParticipantRoute() {
 							<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 								<Field>
 									<Label htmlFor={fields.firstName.id}>First Name</Label>
-									<InputField meta={fields.firstName} type="text" />
+									<InputField
+										meta={fields.firstName}
+										type="text"
+										autoCapitalize="words"
+										autoCorrect="off"
+										spellCheck={false}
+									/>
 									{fields.firstName.errors && (
 										<FieldError>{fields.firstName.errors}</FieldError>
 									)}
@@ -1300,7 +1295,13 @@ export default function EditParticipantRoute() {
 
 								<Field>
 									<Label htmlFor={fields.familyName.id}>Family Name</Label>
-									<InputField meta={fields.familyName} type="text" />
+									<InputField
+										meta={fields.familyName}
+										type="text"
+										autoCapitalize="words"
+										autoCorrect="off"
+										spellCheck={false}
+									/>
 									{fields.familyName.errors && (
 										<FieldError>{fields.familyName.errors}</FieldError>
 									)}
@@ -1365,7 +1366,13 @@ export default function EditParticipantRoute() {
 							<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 								<Field>
 									<Label htmlFor={fields.passportNumber.id}>Passport Number</Label>
-									<InputField meta={fields.passportNumber} type="text" />
+									<InputField
+										meta={fields.passportNumber}
+										type="text"
+										autoCapitalize="characters"
+										autoCorrect="off"
+										spellCheck={false}
+									/>
 									{fields.passportNumber.errors && (
 										<FieldError>{fields.passportNumber.errors}</FieldError>
 									)}

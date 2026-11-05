@@ -10,7 +10,7 @@ export async function loader() {
 
 export default function EventRequirementsRoute() {
 	return (
-		<div className="flex min-h-screen flex-col">
+		<div className="flex min-h-svh flex-col">
 			<main className="flex-1">
 				<section className="w-full py-12">
 					<div className="container px-4 md:px-6">

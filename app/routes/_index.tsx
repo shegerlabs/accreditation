@@ -59,7 +59,7 @@ export default function LandingPage() {
 	const { event } = useLoaderData<typeof loader>()
 
 	return (
-		<div className="flex min-h-screen flex-col">
+		<div className="flex min-h-svh flex-col">
 			<main className="flex-1">
 				<section className="flex w-full items-center justify-center bg-gradient-to-b from-white to-gray-100 py-8 dark:from-gray-900 dark:to-gray-800 md:py-16 lg:py-24 xl:py-32">
 					<div className="container px-4 md:px-6">

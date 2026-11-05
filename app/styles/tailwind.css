@@ -63,7 +63,22 @@
 	* {
 		@apply border-border;
 	}
+	html {
+		-webkit-tap-highlight-color: transparent;
+		-webkit-text-size-adjust: 100%;
+	}
 	body {
 		@apply bg-background text-foreground;
+	}
+	button,
+	a,
+	input,
+	[role='button'] {
+		touch-action: manipulation;
+	}
+	button,
+	[role='button'] {
+		-webkit-user-select: none;
+		user-select: none;
 	}
 }

@@ -225,7 +225,7 @@ export default function App() {
 		>
 			<AuthenticityTokenProvider token={data.csrfToken}>
 				<HoneypotProvider {...data.honeypotProps}>
-					<div className="flex min-h-screen w-full flex-col">
+					<div className="flex min-h-dvh w-full flex-col">
 						{showMaintenanceBanner && (
 							<div className="bg-yellow-400 px-4 py-2 text-center text-sm font-medium text-yellow-900">
 								{data.maintenanceMessage}
@@ -430,7 +430,11 @@ function Document({
 		<html lang="en" className={theme}>
 			<head>
 				<meta charSet="utf-8" />
-				<meta name="viewport" content="width=device-width, initial-scale=1" />
+				<meta
+					name="viewport"
+					content="width=device-width, initial-scale=1, interactive-widget=resizes-content"
+				/>
+				<meta name="theme-color" content="#c6bc9f" />
 				<Meta />
 				<Links />
 			</head>

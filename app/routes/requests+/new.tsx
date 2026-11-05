@@ -19,7 +19,7 @@ import {
 	useLoaderData,
 	useSearchParams,
 } from '@remix-run/react'
-import { AlertCircle, CheckCircle, Eye, Info } from 'lucide-react'
+import { AlertCircle, CheckCircle, Eye } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import ReactDOMServer from 'react-dom/server'
 import { AuthenticityTokenInput } from 'remix-utils/csrf/react'
@@ -52,12 +52,6 @@ import {
 import { Label } from '~/components/ui/label'
 import { Progress } from '~/components/ui/progress'
 import { Separator } from '~/components/ui/separator'
-import {
-	Tooltip,
-	TooltipContent,
-	TooltipProvider,
-	TooltipTrigger,
-} from '~/components/ui/tooltip'
 import { auditRequest } from '~/utils/audit.server'
 import { requireUserWithRoles } from '~/utils/auth.server'
 import { validateCSRF } from '~/utils/csrf.server'
@@ -1630,20 +1624,13 @@ function DocumentUploadField({
 					<InputField meta={documentFields.documentType} type="hidden" />
 
 					<Field>
-						<div className="mb-2 flex items-center gap-2">
+						<div className="mb-2">
 							<Label htmlFor={documentFields.file.id}>
 								{documentFields.documentType.initialValue}
 							</Label>
-							<TooltipProvider>
-								<Tooltip>
-									<TooltipTrigger asChild>
-										<Info className="h-4 w-4 cursor-help text-muted-foreground" />
-									</TooltipTrigger>
-									<TooltipContent>
-										<p>{getDocumentHint()}</p>
-									</TooltipContent>
-								</Tooltip>
-							</TooltipProvider>
+							<p className="mt-1 text-xs text-muted-foreground">
+								{getDocumentHint()}
+							</p>
 						</div>
 						<div className="flex gap-2">
 							<div className="flex-1" ref={fileInputRef}>
@@ -2409,7 +2396,13 @@ export default function NewParticipantRoute() {
 							<div className="grid grid-cols-1 gap-4 md:grid-cols-2">
 								<Field>
 									<Label htmlFor={fields.firstName.id}>First Name</Label>
-									<InputField meta={fields.firstName} type="text" />
+									<InputField
+										meta={fields.firstName}
+										type="text"
+										autoCapitalize="words"
+										autoCorrect="off"
+										spellCheck={false}
+									/>
 									{fields.firstName.errors && (
 										<FieldError>{fields.firstName.errors}</FieldError>
 									)}
@@ -2417,7 +2410,13 @@ export default function NewParticipantRoute() {
 
 								<Field>
 									<Label htmlFor={fields.familyName.id}>Family Name</Label>
-									<InputField meta={fields.familyName} type="text" />
+									<InputField
+										meta={fields.familyName}
+										type="text"
+										autoCapitalize="words"
+										autoCorrect="off"
+										spellCheck={false}
+									/>
 									{fields.familyName.errors && (
 										<FieldError>{fields.familyName.errors}</FieldError>
 									)}
@@ -2484,7 +2483,13 @@ export default function NewParticipantRoute() {
 									<Label htmlFor={fields.passportNumber.id}>
 										Passport Number
 									</Label>
-									<InputField meta={fields.passportNumber} type="text" />
+									<InputField
+										meta={fields.passportNumber}
+										type="text"
+										autoCapitalize="characters"
+										autoCorrect="off"
+										spellCheck={false}
+									/>
 									{fields.passportNumber.errors && (
 										<FieldError>{fields.passportNumber.errors}</FieldError>
 									)}
