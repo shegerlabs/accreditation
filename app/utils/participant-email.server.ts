@@ -136,6 +136,51 @@ export async function resendEmail(emailLogId: string, triggeredById: string) {
 	return original
 }
 
+// The latest attempt for each participant, email type and recipient, where that
+// attempt failed. A failure followed by a successful or still-pending send is skipped.
+export async function getEmailsToRetry(eventId: string) {
+	const logs = await prisma.emailLog.findMany({
+		where: { participant: { eventId } },
+		orderBy: { createdAt: 'desc' },
+		select: { id: true, participantId: true, trigger: true, recipient: true, status: true },
+	})
+	const seen = new Set<string>()
+	const toRetry: string[] = []
+	for (const log of logs) {
+		const key = `${log.participantId}|${log.trigger}|${log.recipient.toLowerCase()}`
+		if (seen.has(key)) continue
+		seen.add(key)
+		if (log.status === 'FAILED') toRetry.push(log.id)
+	}
+	return toRetry
+}
+
+// Resends every email from getEmailsToRetry. The new log rows are created up
+// front, so they show as pending at once and a second click finds nothing to
+// retry. Delivery then runs one at a time after the response, to stay under
+// Azure's sending limits.
+export async function retryFailedEmails(eventId: string, triggeredById: string) {
+	const ids = await getEmailsToRetry(eventId)
+	const originals = await prisma.emailLog.findMany({
+		where: { id: { in: ids } },
+		select: { participantId: true, trigger: true, recipient: true, subject: true, body: true },
+	})
+	const queued = await prisma.$transaction(
+		originals.map(original =>
+			prisma.emailLog.create({
+				data: { ...original, triggeredById },
+				select: { id: true, recipient: true, subject: true, body: true },
+			}),
+		),
+	)
+	void (async () => {
+		for (const log of queued) {
+			await deliver(log.id, log.recipient, log.subject, log.body)
+		}
+	})()
+	return queued.length
+}
+
 // For the admin's "send test" button. Awaited, and not logged against a participant.
 export async function sendTestEmail(to: string, subject: string, body: string) {
 	return sendEmailAzure({ to, subject, plainText: body, html: buildEmailHtml(subject, body) })
