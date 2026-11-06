@@ -31,6 +31,7 @@ import {
 	validateQuotaForTypeChange,
 	getAllowedParticipantTypes,
 } from '~/utils/quota.server'
+import { registrableTypeWhere } from '~/utils/event-participant-types.server'
 import { redirectWithToast } from '~/utils/toast.server'
 
 const EditDetailsSchema = z.object({
@@ -50,6 +51,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 			firstName: true,
 			familyName: true,
 			tenantId: true,
+			eventId: true,
 			participantTypeId: true,
 			wishList: true,
 			invitationId: true,
@@ -81,6 +83,8 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 	const participantTypes = await getAllowedParticipantTypes({
 		invitationId: participant.invitationId,
 		tenantId: participant.tenantId,
+		eventId: participant.eventId,
+		currentTypeId: participant.participantTypeId,
 	})
 
 	// Get meeting types for this tenant (exclude Executive Council Closed Session for users)
@@ -162,11 +166,14 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
 	const { participantTypeId } = submission.value
 
-	// Verify participant type belongs to same tenant
+	// Verify participant type belongs to same tenant, and a new type is open at this event
 	const participantType = await prisma.participantType.findFirst({
 		where: {
 			id: participantTypeId,
 			tenantId: participant.tenantId,
+			...(participantTypeId === participant.participantTypeId
+				? {}
+				: registrableTypeWhere(participant.eventId)),
 		},
 	})
 

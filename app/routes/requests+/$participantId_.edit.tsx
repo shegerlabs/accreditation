@@ -56,6 +56,7 @@ import { redirectWithToast } from '~/utils/toast.server'
 import { getSetting, SettingKeys } from '~/utils/settings.server'
 import { xssTransform } from '~/utils/validations'
 import { getAllowedParticipantTypes, isClosedSessionQuotaAvailable, validateQuotaForTypeChange } from '~/utils/quota.server'
+import { NOT_REGISTRABLE_MESSAGE, isRegistrableType } from '~/utils/event-participant-types.server'
 import { sendParticipantEmail } from '~/utils/participant-email.server'
 import { processParticipant } from '~/utils/workflow.server'
 import { FormCard } from '~/components/form-card'
@@ -294,6 +295,8 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
 	const allowedParticipantTypes = await getAllowedParticipantTypes({
 		invitationId: participant.invitationId,
 		tenantId: participant.tenantId,
+		eventId: participant.eventId,
+		currentTypeId: participant.participantTypeId,
 	})
 
 	// Check if Closed Session quota is still available for this participant
@@ -442,6 +445,14 @@ export async function action({ request, params }: ActionFunctionArgs) {
 			// Validate quota for the new type and access level
 			// We need to check quota whether type changed or not, because access level might change
 			const typeChanged = data.participantTypeId !== participant.participantTypeId
+			if (typeChanged && !(await isRegistrableType(data.eventId, data.participantTypeId))) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: NOT_REGISTRABLE_MESSAGE,
+					path: ['participantTypeId'],
+				})
+				return
+			}
 
 			// Determine if user is requesting Closed Session
 			let newAttendClosedSession = false

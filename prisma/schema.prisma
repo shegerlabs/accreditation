@@ -421,6 +421,7 @@ model Event {
   templates    Template[]
   userAccess   UserEventAccess[]
   emailTemplates EmailTemplate[]
+  participantTypes EventParticipantType[]
 
   @@unique([tenantId, name])
   @@unique([tenantId, name, startDate, endDate])
@@ -478,8 +479,22 @@ model ParticipantType {
   participants                     Participant[]
   templates                        Template[]
   invitationConstraints            InvitationConstraint[]
+  events                           EventParticipantType[]
 
   @@unique([tenantId, name])
+}
+
+// The participant types an event uses, out of its tenant's catalogue. Owned by
+// the admin app (see its schema); the registration form only offers these.
+model EventParticipantType {
+  eventId           String
+  event             Event           @relation(fields: [eventId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  participantTypeId String
+  participantType   ParticipantType @relation(fields: [participantTypeId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  createdAt         DateTime        @default(now())
+
+  @@id([eventId, participantTypeId])
+  @@index([participantTypeId])
 }
 
 model Meeting {

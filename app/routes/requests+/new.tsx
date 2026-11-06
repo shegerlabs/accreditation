@@ -68,6 +68,7 @@ import { useOptionalUser, userHasRole } from '~/utils/user'
 import { getSetting, SettingKeys } from '~/utils/settings.server'
 import { xssTransform } from '~/utils/validations'
 import { processParticipant } from '~/utils/workflow.server'
+import { NOT_REGISTRABLE_MESSAGE, isRegistrableType } from '~/utils/event-participant-types.server'
 import { FormCard } from '~/components/form-card'
 
 // =============================================================================
@@ -569,7 +570,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
 		lookup_data AS (
 			SELECT
 				-- All participant types (for type selection dropdown)
-				COALESCE((SELECT json_agg(json_build_object('id', pt.id, 'name', pt.name)) FROM "ParticipantType" pt), '[]'::json) as "participantTypes",
+				-- Only the event's participant types that have a workflow (see event-participant-types.server.ts)
+				COALESCE((
+					SELECT json_agg(json_build_object('id', pt.id, 'name', pt.name))
+					FROM "ParticipantType" pt
+					WHERE EXISTS (SELECT 1 FROM "EventParticipantType" ept WHERE ept."participantTypeId" = pt.id AND ept."eventId" = ${eventId})
+						AND EXISTS (SELECT 1 FROM "Workflow" w WHERE w."participantTypeId" = pt.id AND w."eventId" = ${eventId})
+				), '[]'::json) as "participantTypes",
 
 				-- All countries sorted alphabetically (for nationality/country dropdowns)
 				COALESCE((SELECT json_agg(json_build_object('id', c.id, 'name', c.name) ORDER BY c.name ASC) FROM "Country" c), '[]'::json) as countries,
@@ -1065,13 +1072,11 @@ export async function action({ request }: ActionFunctionArgs) {
 		},
 	})
 
-	if (!firstStep) {
+	if (!firstStep || !(await isRegistrableType(formValues.eventId, formValues.participantTypeId))) {
 		return json(
 			{
 				result: submission.reply({
-					formErrors: [
-						'No workflow configured for this event and participant type. Please contact an administrator.',
-					],
+					formErrors: [NOT_REGISTRABLE_MESSAGE],
 				}),
 			},
 			{ status: 400 },

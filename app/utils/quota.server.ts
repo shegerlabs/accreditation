@@ -1,4 +1,5 @@
 import { prisma } from '~/utils/db.server'
+import { registrableTypeWhere } from '~/utils/event-participant-types.server'
 
 export type QuotaConstraintRow = {
 	participantType: string
@@ -299,14 +300,22 @@ export async function isClosedSessionQuotaAvailable({
 export async function getAllowedParticipantTypes({
 	invitationId,
 	tenantId,
+	eventId,
+	currentTypeId,
 }: {
 	invitationId: string | null
 	tenantId: string
+	eventId: string
+	/** The participant's own type stays selectable even if it is no longer open for registration. */
+	currentTypeId?: string
 }): Promise<{ id: string; name: string }[]> {
+	const openTypes = currentTypeId
+		? { OR: [registrableTypeWhere(eventId), { id: currentTypeId }] }
+		: registrableTypeWhere(eventId)
 	// No invitation — return all participant types
 	if (!invitationId) {
 		return prisma.participantType.findMany({
-			where: { tenantId },
+			where: { tenantId, ...openTypes },
 			select: { id: true, name: true },
 			orderBy: { name: 'asc' },
 		})
@@ -326,7 +335,7 @@ export async function getAllowedParticipantTypes({
 	// No invitation found or no constraints — return all participant types
 	if (!invitation || invitation.invitationConstraints.length === 0) {
 		return prisma.participantType.findMany({
-			where: { tenantId },
+			where: { tenantId, ...openTypes },
 			select: { id: true, name: true },
 			orderBy: { name: 'asc' },
 		})
@@ -340,17 +349,25 @@ export async function getAllowedParticipantTypes({
 	if (hasAnyConstraint) {
 		// "Any" constraint means all participant types are allowed
 		return prisma.participantType.findMany({
-			where: { tenantId },
+			where: { tenantId, ...openTypes },
 			select: { id: true, name: true },
 			orderBy: { name: 'asc' },
 		})
 	}
 
 	// No "Any" constraint - only specific types are allowed
+	const registrable = new Set(
+		(
+			await prisma.participantType.findMany({
+				where: { tenantId, ...openTypes },
+				select: { id: true },
+			})
+		).map(t => t.id),
+	)
 	const typeMap = new Map<string, { id: string; name: string }>()
 	for (const constraint of invitation.invitationConstraints) {
 		const pt = constraint.participantType
-		if (!typeMap.has(pt.id)) {
+		if (registrable.has(pt.id) && !typeMap.has(pt.id)) {
 			typeMap.set(pt.id, pt)
 		}
 	}
