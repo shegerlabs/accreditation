@@ -337,7 +337,7 @@ export default function ParticipantProfile() {
 		},
 		{
 			type: 'PASSPORT',
-			label: 'Passport',
+			label: 'ID/Passport',
 			icon: FileText,
 			link: passportLink,
 			doc: passport,
@@ -345,7 +345,7 @@ export default function ParticipantProfile() {
 		},
 		{
 			type: 'LETTER',
-			label: 'Letter',
+			label: 'Invitation Letter',
 			icon: FileCheck,
 			link: letterLink,
 			doc: letter,
@@ -464,7 +464,7 @@ export default function ParticipantProfile() {
 				/>
 				<InfoCard
 					icon={FileText}
-					label="Passport"
+					label="ID/Passport"
 					items={[
 						{ label: 'Number', value: general.passportNumber ?? 'N/A' },
 						{

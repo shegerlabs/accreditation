@@ -93,6 +93,13 @@ enum DocumentType {
   OTHER
 }
 
+// Which identity document passportNumber/passportExpiry describe. Only a
+// passport has an expiry date.
+enum IdentityDocumentType {
+  PASSPORT
+  NATIONAL_ID
+}
+
 enum BadgeElementType {
   PHOTO
   QR_CODE
@@ -716,8 +723,9 @@ model Participant {
   dateOfBirth           DateTime
   nationalityId         String
   nationality           Country               @relation("Nationality", fields: [nationalityId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  identityDocumentType  IdentityDocumentType  @default(PASSPORT)
   passportNumber        String
-  passportExpiry        DateTime
+  passportExpiry        DateTime?
   organization          String
   jobTitle              String
   countryId             String

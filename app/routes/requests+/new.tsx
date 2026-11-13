@@ -24,7 +24,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { AuthenticityTokenInput } from 'remix-utils/csrf/react'
 import { HoneypotInputs } from 'remix-utils/honeypot/react'
 import { z } from 'zod'
-import { CheckboxGroupField } from '~/components/conform/CheckboxGroupField'
 import { DatePickerField } from '~/components/conform/DatePickerField'
 import { CameraFileInputField } from '~/components/conform/CameraFileInputField'
 import { FileInputField } from '~/components/conform/FileInputField'
@@ -87,12 +86,6 @@ interface CountryRef {
 	name: string
 }
 
-/** Meeting type reference for wishlist */
-interface MeetingTypeRef {
-	id: string
-	name: string
-}
-
 /** Title reference for dropdowns */
 interface TitleRef {
 	id: string
@@ -138,7 +131,6 @@ interface LoaderQueryResult {
 	invitations: InvitationData[]
 	participantTypes: ParticipantTypeRef[]
 	countries: CountryRef[]
-	meetingTypes: MeetingTypeRef[]
 	titles: TitleRef[]
 	validation: ValidationData
 }
@@ -147,6 +139,22 @@ interface LoaderQueryResult {
 // This is used for client-side validation; server validates against actual setting
 const DEFAULT_MAX_UPLOAD_SIZE_MB = 3
 const MAX_UPLOAD_SIZE = 1024 * 1024 * DEFAULT_MAX_UPLOAD_SIZE_MB
+
+const REQUIRED_DOCUMENT_TYPES = ['PASSPORT', 'PHOTO']
+const OPTIONAL_DOCUMENT_TYPES = ['LETTER']
+
+function documentTypeLabel(documentType: string) {
+	switch (documentType) {
+		case 'PASSPORT':
+			return 'ID/Passport'
+		case 'PHOTO':
+			return 'Photo'
+		case 'LETTER':
+			return 'Invitation Letter'
+		default:
+			return documentType
+	}
+}
 
 const AttachmentFieldSetSchema = z
 	.object({
@@ -179,9 +187,10 @@ const AttachmentFieldSetSchema = z
 		}
 	})
 	.refine(
-		data => {
-			return Boolean(data.id) || Boolean(data.file?.size)
-		},
+		data =>
+			OPTIONAL_DOCUMENT_TYPES.includes(data.documentType) ||
+			Boolean(data.id) ||
+			Boolean(data.file?.size),
 		{
 			message: 'A file must be attached',
 			path: ['file'],
@@ -234,9 +243,12 @@ export const ConsolidatedRegistrationSchema = z
 				message: 'Date of Birth cannot be in the future',
 			}),
 		nationalityId: z.string({ required_error: 'Nationality is required' }),
+		identityDocumentType: z.enum(['PASSPORT', 'NATIONAL_ID'], {
+			required_error: 'ID type is required',
+		}),
 		passportNumber: z
-			.string({ required_error: 'Passport Number is required' })
-			.regex(/^[a-zA-Z0-9- ]+$/, { message: 'Invalid passport number' })
+			.string({ required_error: 'ID/Passport Number is required' })
+			.regex(/^[a-zA-Z0-9- ]+$/, { message: 'Invalid ID/passport number' })
 			.transform(xssTransform)
 			.transform(value => value?.replace(/[- ]/g, '') ?? '')
 			.transform(value => value.toUpperCase()),
@@ -245,8 +257,9 @@ export const ConsolidatedRegistrationSchema = z
 		// causing stale date comparisons if the server runs for days/weeks.
 		// .refine() evaluates the date at validation time (each request).
 		// Passport must be valid today or in the future (not expired).
+		// Required only for passports (checked below); a national ID has no expiry.
 		passportExpiry: z
-			.date({ required_error: 'Passport Expiry is required' })
+			.date()
 			.refine(
 				(date) => {
 					const today = new Date()
@@ -254,7 +267,8 @@ export const ConsolidatedRegistrationSchema = z
 					return date >= today
 				},
 				{ message: 'Passport must not be expired' },
-			),
+			)
+			.optional(),
 
 		// Professional Info
 		organization: z
@@ -278,20 +292,10 @@ export const ConsolidatedRegistrationSchema = z
 			.transform(xssTransform)
 			.optional()
 			.or(z.literal('')),
-		preferredLanguage: z.enum([
-			'ENGLISH',
-			'FRENCH',
-			'PORTUGUESE',
-			'ARABIC',
-			'SWAHLI',
-			'OTHER',
-		]),
 
-		// Wishlist
 		needsVisa: z.boolean().default(false),
 		needsCarPass: z.boolean().default(false),
 		needsCarFromOrganizer: z.boolean().default(false),
-		meetings: z.array(z.string()).optional(),
 
 		// Documents
 		documents: z.array(AttachmentFieldSetSchema),
@@ -300,9 +304,16 @@ export const ConsolidatedRegistrationSchema = z
 		// Note: Role-based validation (invitation required for focal, email required for users)
 		// is handled in the action's async superRefine where we have access to user info
 
+		if (data.identityDocumentType === 'PASSPORT' && !data.passportExpiry) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'Passport Expiry is required',
+				path: ['passportExpiry'],
+			})
+		}
+
 		// Validate all required documents are present
-		const requiredTypes = ['PASSPORT', 'PHOTO', 'LETTER']
-		const missingTypes = requiredTypes.filter(
+		const missingTypes = REQUIRED_DOCUMENT_TYPES.filter(
 			type =>
 				!data.documents.some(
 					doc =>
@@ -314,7 +325,9 @@ export const ConsolidatedRegistrationSchema = z
 		if (missingTypes.length > 0) {
 			ctx.addIssue({
 				code: z.ZodIssueCode.custom,
-				message: `Missing required documents: ${missingTypes.join(', ')}`,
+				message: `Missing required documents: ${missingTypes
+					.map(documentTypeLabel)
+					.join(', ')}`,
 				path: ['documents'],
 			})
 		}
@@ -338,7 +351,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 	 * This query uses PostgreSQL CTEs (Common Table Expressions) to fetch:
 	 * 1. User's invitations with nested participants and quota constraints
 	 * 2. Count of participants in closed sessions (for quota checking)
-	 * 3. Lookup data for form dropdowns (participant types, countries, meeting types)
+	 * 3. Lookup data for form dropdowns (participant types, countries, titles)
 	 * 4. Validation checks (event/tenant existence)
 	 *
 	 * WHY RAW SQL?
@@ -581,9 +594,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
 				-- All countries sorted alphabetically (for nationality/country dropdowns)
 				COALESCE((SELECT json_agg(json_build_object('id', c.id, 'name', c.name) ORDER BY c.name ASC) FROM "Country" c), '[]'::json) as countries,
 
-				-- Meeting types for this tenant (for wishlist checkboxes)
-				COALESCE((SELECT json_agg(json_build_object('id', mt.id, 'name', mt.name)) FROM "MeetingType" mt WHERE mt."tenantId" = ${tenantId}), '[]'::json) as "meetingTypes",
-
 				-- All titles sorted alphabetically (for title dropdown)
 				COALESCE((SELECT json_agg(json_build_object('id', t.id, 'name', t.name) ORDER BY t.name ASC) FROM "Title" t), '[]'::json) as titles
 		),
@@ -619,7 +629,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
 			-- Lookup data for form dropdowns
 			l."participantTypes",
 			l.countries,
-			l."meetingTypes",
 			l.titles,
 
 			-- Validation results as JSON object
@@ -669,7 +678,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
 		invitations: data.invitations,
 		participantTypes: data.participantTypes,
 		countries: data.countries,
-		meetingTypes: data.meetingTypes,
 		titles: data.titles,
 		userEmail: user.email,
 		existingParticipant: existingParticipant?.id ?? null,
@@ -873,18 +881,6 @@ export async function action({ request }: ActionFunctionArgs) {
 						return
 					}
 
-					// Determine if participant is requesting Closed Session
-					// (based on wishlist/meetings selection)
-					const isRequestingClosed =
-						data.meetings &&
-						(await prisma.meetingType.findFirst({
-							where: {
-								tenantId: data.tenantId,
-								name: 'Closed Session',
-								id: { in: data.meetings },
-							},
-						})) !== null
-
 					// Check if at least ONE applicable constraint has available quota
 					let hasAvailableQuota = false
 
@@ -930,11 +926,10 @@ export async function action({ request }: ActionFunctionArgs) {
 							break
 						}
 
-						// Determine if this constraint matches the access level request
+						// Registration has no meeting wishlist, so nobody requests
+						// Closed Session: only OPEN constraints can admit them.
 						const isClosedConstraint = constraint.accessLevel === 'CLOSED'
-						const constraintMatchesRequest =
-							(isRequestingClosed && isClosedConstraint) ||
-							(!isRequestingClosed && !isClosedConstraint)
+						const constraintMatchesRequest = !isClosedConstraint
 
 						// Count participants matching this constraint using pre-fetched data
 						// For "Any" type: count all participants with matching access level
@@ -1120,33 +1115,6 @@ export async function action({ request }: ActionFunctionArgs) {
 	)
 	const registrationCode = generatedCode
 
-	// Determine if participant is requesting Closed Session (for attendClosedSession field)
-	const closedSessionMeetingType = formValues.meetings
-		? await prisma.meetingType.findFirst({
-				where: {
-					tenantId: formValues.tenantId,
-					name: 'Closed Session',
-					id: { in: formValues.meetings },
-				},
-				select: { id: true },
-			})
-		: null
-	const attendClosedSession = closedSessionMeetingType !== null
-
-	// Determine if participant is requesting Executive Council Closed Session
-	const executiveCouncilClosedSessionMeetingType = formValues.meetings
-		? await prisma.meetingType.findFirst({
-				where: {
-					tenantId: formValues.tenantId,
-					name: 'Executive Council Closed Session',
-					id: { in: formValues.meetings },
-				},
-				select: { id: true },
-			})
-		: null
-	const attendExecutiveCouncilClosedSession =
-		executiveCouncilClosedSessionMeetingType !== null
-
 	// Create participant
 	const participant = await prisma.participant.create({
 		select: { id: true, email: true, firstName: true, familyName: true },
@@ -1162,8 +1130,12 @@ export async function action({ request }: ActionFunctionArgs) {
 			familyName: formValues.familyName!,
 			dateOfBirth: formValues.dateOfBirth,
 			nationalityId: formValues.nationalityId,
+			identityDocumentType: formValues.identityDocumentType,
 			passportNumber: formValues.passportNumber,
-			passportExpiry: formValues.passportExpiry,
+			passportExpiry:
+				formValues.identityDocumentType === 'PASSPORT'
+					? formValues.passportExpiry
+					: null,
 			// For user role (not focal), use logged-in user's email
 			// For focal role, use provided email or null (null won't trigger unique constraint)
 			email: isFocal ? formValues.email || null : user.email,
@@ -1171,13 +1143,9 @@ export async function action({ request }: ActionFunctionArgs) {
 			jobTitle: formValues.jobTitle!,
 			countryId: formValues.countryId,
 			city: formValues.city!,
-			preferredLanguage: formValues.preferredLanguage,
 			needsVisa: formValues.needsVisa,
 			needsCarPass: formValues.needsCarPass,
 			needsCarFromOrganizer: formValues.needsCarFromOrganizer,
-			wishList: formValues.meetings?.join(',') ?? null,
-			attendClosedSession,
-			attendExecutiveCouncilClosedSession,
 			stepId: firstStep.id,
 			status: RequestStatus.PENDING,
 			registrationCode,
@@ -1609,7 +1577,10 @@ function DocumentUploadField({
 					<Field>
 						<div className="mb-2">
 							<Label htmlFor={documentFields.file.id}>
-								{documentFields.documentType.initialValue}
+								{documentTypeLabel(documentType)}
+								{OPTIONAL_DOCUMENT_TYPES.includes(documentType) && (
+									<span className="text-muted-foreground"> (Optional)</span>
+								)}
 							</Label>
 							<p className="mt-1 text-xs text-muted-foreground">
 								{getDocumentHint()}
@@ -1698,7 +1669,6 @@ export default function NewParticipantRoute() {
 		invitations,
 		participantTypes,
 		countries,
-		meetingTypes,
 		titles,
 		userEmail,
 		existingParticipant,
@@ -1727,7 +1697,7 @@ export default function NewParticipantRoute() {
 			// User role: pre-fill with logged-in user's email
 			email: isFocal ? '' : userEmail,
 			invitationId: invitations.length === 1 ? invitations[0].id : '',
-			preferredLanguage: 'ENGLISH',
+			identityDocumentType: 'PASSPORT',
 			needsVisa: false,
 			needsCarPass: false,
 			needsCarFromOrganizer: false,
@@ -1735,7 +1705,7 @@ export default function NewParticipantRoute() {
 				{
 					id: '',
 					file: undefined,
-					altText: 'Passport',
+					altText: 'ID/Passport',
 					documentType: 'PASSPORT',
 				},
 				{
@@ -2120,6 +2090,7 @@ export default function NewParticipantRoute() {
 	}, [fields.invitationId.value, invitations, isFocal])
 
 	const documents = fields.documents.getFieldList()
+	const isNationalId = fields.identityDocumentType.value === 'NATIONAL_ID'
 
 	// Focal users with no invitations: show blocking message
 	if (isFocal && invitations.length === 0) {
@@ -2461,10 +2432,29 @@ export default function NewParticipantRoute() {
 								)}
 							</Field>
 
-							<div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+							<div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+								<Field>
+									<Label htmlFor={fields.identityDocumentType.id}>
+										ID Type
+									</Label>
+									<SelectField
+										meta={fields.identityDocumentType}
+										items={[
+											{ name: 'Passport', value: 'PASSPORT' },
+											{ name: 'National ID', value: 'NATIONAL_ID' },
+										]}
+										placeholder="Select"
+									/>
+									{fields.identityDocumentType.errors && (
+										<FieldError>
+											{fields.identityDocumentType.errors}
+										</FieldError>
+									)}
+								</Field>
+
 								<Field>
 									<Label htmlFor={fields.passportNumber.id}>
-										Passport Number
+										{isNationalId ? 'ID Number' : 'Passport Number'}
 									</Label>
 									<InputField
 										meta={fields.passportNumber}
@@ -2478,15 +2468,17 @@ export default function NewParticipantRoute() {
 									)}
 								</Field>
 
-								<Field>
-									<Label htmlFor={fields.passportExpiry.id}>
-										Passport Expiry
-									</Label>
-									<DatePickerField meta={fields.passportExpiry} />
-									{fields.passportExpiry.errors && (
-										<FieldError>{fields.passportExpiry.errors}</FieldError>
-									)}
-								</Field>
+								{!isNationalId && (
+									<Field>
+										<Label htmlFor={fields.passportExpiry.id}>
+											Passport Expiry
+										</Label>
+										<DatePickerField meta={fields.passportExpiry} />
+										{fields.passportExpiry.errors && (
+											<FieldError>{fields.passportExpiry.errors}</FieldError>
+										)}
+									</Field>
+								)}
 							</div>
 
 							<Field>
@@ -2657,235 +2649,11 @@ export default function NewParticipantRoute() {
 								)}
 							</div>
 
-							<Field>
-								<Label htmlFor={fields.preferredLanguage.id}>
-									Preferred Language
-								</Label>
-								<SelectField
-									meta={fields.preferredLanguage}
-									items={[
-										'ENGLISH',
-										'FRENCH',
-										'PORTUGUESE',
-										'ARABIC',
-										'SWAHLI',
-										'OTHER',
-									].map(language => ({
-										name: language,
-										value: language,
-									}))}
-									placeholder="Select Preferred Language"
-								/>
-								{fields.preferredLanguage.errors && (
-									<FieldError>{fields.preferredLanguage.errors}</FieldError>
-								)}
-							</Field>
 						</CardContent>
 					</Card>
 				</div>
 
-				{/* Section 3: Wishlist (Optional) */}
-				<div className="space-y-4">
-					<h2 className="flex items-center gap-2 text-base font-semibold">
-						Meeting Wishlist (Optional)
-					</h2>
-					<Card>
-						<CardContent className="space-y-4 pt-6">
-							<Field>
-								<fieldset>
-									{/*
-									 * ================================================================
-									 * CLOSED SESSION WISHLIST FILTERING LOGIC
-									 * ================================================================
-									 *
-									 * Closed Session checkbox dynamically shows/hides based on:
-									 * 1. The selected participant type
-									 * 2. CLOSED constraints and their available quotas
-									 *
-									 * RULE: Show Closed Session only if the selected participant type
-									 * has available CLOSED quota (checking both type-specific and "Any"
-									 * constraints).
-									 *
-									 * ================================================================
-									 * PRIORITY LOGIC
-									 * ================================================================
-									 *
-									 * 1. If type-specific CLOSED constraint exists:
-									 *    - Check its quota first (type-specific takes precedence)
-									 *    - Also check "Any" CLOSED (overall cap) if it exists
-									 *    - BOTH must have quota for Closed Session to show
-									 *
-									 * 2. If no type-specific constraint, use "Any" CLOSED constraint
-									 *
-									 * 3. If no CLOSED constraints at all, show Closed Session
-									 *
-									 * ================================================================
-									 * EXAMPLES
-									 * ================================================================
-									 *
-									 * EXAMPLE 1: Any CLOSED with quota
-									 * ────────────────────────────────
-									 * Constraints:
-									 *   • Any, CLOSED, 20
-									 *   • Any, OPEN, Unlimited
-									 *
-									 * User selects Delegate:
-									 * → No Delegate-specific CLOSED constraint
-									 * → Falls back to "Any, CLOSED"
-									 * → If count < 20, Closed Session SHOWS
-									 * → If count >= 20, Closed Session HIDDEN
-									 *
-									 * EXAMPLE 2: Type-specific sub-limits (FIXED BEHAVIOR)
-									 * ─────────────────────────────────────────────────────
-									 * Constraints:
-									 *   • Any, CLOSED, 20       (overall cap)
-									 *   • Delegate, CLOSED, 5   (Delegate sub-limit)
-									 *   • Any, OPEN, Unlimited
-									 *
-									 * State: 5 Delegates + 10 others have selected Closed
-									 *
-									 * User selects Delegate:
-									 * → Found Delegate-specific constraint (quota: 5, count: 5)
-									 * → Type-specific quota EXHAUSTED
-									 * → Closed Session HIDDEN for Delegates
-									 *
-									 * User selects Press:
-									 * → No Press-specific constraint
-									 * → Falls back to "Any, CLOSED" (quota: 20, count: 15)
-									 * → "Any" has space (15 < 20)
-									 * → Closed Session SHOWS for Press
-									 *
-									 * EXAMPLE 3: Both type-specific and Any exhausted
-									 * ─────────────────────────────────────────────────
-									 * Constraints:
-									 *   • Any, CLOSED, 20
-									 *   • Delegate, CLOSED, 5
-									 *
-									 * State: 5 Delegates + 15 others have selected Closed
-									 *
-									 * User selects ANY participant type:
-									 * → "Any, CLOSED" count = 20 (FULL)
-									 * → Closed Session HIDDEN for ALL types
-									 *
-									 * EXAMPLE 4: Type-specific has room but Any is full
-									 * ────────────────────────────────────────────────
-									 * Constraints:
-									 *   • Any, CLOSED, 20
-									 *   • Delegate, CLOSED, 10
-									 *
-									 * State: 3 Delegates + 17 others have selected Closed
-									 *
-									 * User selects Delegate:
-									 * → Delegate-specific has room (3 < 10)
-									 * → BUT "Any, CLOSED" is full (20 >= 20)
-									 * → Closed Session HIDDEN (overall cap reached)
-									 *
-									 * ================================================================
-									 */}
-									<CheckboxGroupField
-										meta={fields.meetings}
-										items={meetingTypes
-											.filter(meetingType => {
-												if (meetingType.name === 'Closed Session') {
-													// For focal users, check CLOSED constraints based on selected participant type
-													if (isFocal && fields.invitationId.value) {
-														const selectedInvitation = invitations.find(
-															inv => inv.id === fields.invitationId.value,
-														)
-														if (!selectedInvitation) return false
-
-														// Find all CLOSED constraints
-														const closedConstraints =
-															selectedInvitation.invitationConstraints?.filter(
-																(ic: any) => ic.accessLevel === 'CLOSED',
-															) || []
-
-														// If no CLOSED constraints exist, hide Closed Session
-														// (invitation only allows OPEN access)
-														if (closedConstraints.length === 0) return false
-
-														// Get the selected participant type ID
-														const selectedParticipantTypeId =
-															fields.participantTypeId.value
-
-														// If no participant type selected yet, check if ANY constraint has quota
-														if (!selectedParticipantTypeId) {
-															return closedConstraints.some((constraint: any) => {
-																if (constraint.quota === null) return true
-																const count =
-																	Number(constraint.participantCount) || 0
-																return count < constraint.quota
-															})
-														}
-
-														// Find type-specific CLOSED constraint for selected participant type
-														const typeSpecificConstraint = closedConstraints.find(
-															(ic: any) =>
-																ic.participantTypeId === selectedParticipantTypeId,
-														)
-
-														// Find "Any" CLOSED constraint (wildcard that applies to all types)
-														const anyConstraint = closedConstraints.find(
-															(ic: any) => ic.participantType?.name === 'Any',
-														)
-
-														// Helper to check if a constraint has available quota
-														const hasAvailableQuota = (constraint: any) => {
-															if (!constraint) return false
-															if (constraint.quota === null) return true // Unlimited
-															const count =
-																Number(constraint.participantCount) || 0
-															return count < constraint.quota
-														}
-
-														// PRIORITY: Type-specific constraint takes precedence
-														// If a type-specific constraint exists, it must have quota
-														if (typeSpecificConstraint) {
-															// Type-specific constraint exists - check its quota
-															if (!hasAvailableQuota(typeSpecificConstraint)) {
-																// Type-specific quota exhausted - hide Closed Session
-																return false
-															}
-															// Type-specific has quota, but also check "Any" (overall cap)
-															if (anyConstraint && !hasAvailableQuota(anyConstraint)) {
-																// Overall cap exhausted - hide Closed Session
-																return false
-															}
-															return true
-														}
-
-														// No type-specific constraint - check "Any" constraint
-														if (anyConstraint) {
-															return hasAvailableQuota(anyConstraint)
-														}
-
-														// No applicable CLOSED constraints for this participant type - hide Closed Session
-														return false
-													}
-													// For non-focal users (role: 'user'), never show Closed Session
-													return false
-												}
-												// Hide Executive Council Closed Session from user registration
-												if (
-													meetingType.name ===
-													'Executive Council Closed Session'
-												) {
-													return false
-												}
-												return true
-											})
-											.map(meetingType => ({
-												name: meetingType.name,
-												value: meetingType.id,
-											}))}
-									/>
-								</fieldset>
-							</Field>
-						</CardContent>
-					</Card>
-				</div>
-
-				{/* Section 4: Supporting Documents */}
+				{/* Section 3: Supporting Documents */}
 				<div className="space-y-4">
 					<h2 className="flex items-center gap-2 text-base font-semibold">
 						Supporting Documents

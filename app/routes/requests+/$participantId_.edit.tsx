@@ -16,7 +16,6 @@ import { useEffect, useRef, useState } from 'react'
 import { AuthenticityTokenInput } from 'remix-utils/csrf/react'
 import { HoneypotInputs } from 'remix-utils/honeypot/react'
 import { z } from 'zod'
-import { CheckboxGroupField } from '~/components/conform/CheckboxGroupField'
 import { DatePickerField } from '~/components/conform/DatePickerField'
 import { CameraFileInputField } from '~/components/conform/CameraFileInputField'
 import { FileInputField } from '~/components/conform/FileInputField'
@@ -55,7 +54,7 @@ import { uploadFile } from '~/utils/storage.server'
 import { redirectWithToast } from '~/utils/toast.server'
 import { getSetting, SettingKeys } from '~/utils/settings.server'
 import { xssTransform } from '~/utils/validations'
-import { getAllowedParticipantTypes, isClosedSessionQuotaAvailable, validateQuotaForTypeChange } from '~/utils/quota.server'
+import { getAllowedParticipantTypes, validateQuotaForTypeChange } from '~/utils/quota.server'
 import { NOT_REGISTRABLE_MESSAGE, isRegistrableType } from '~/utils/event-participant-types.server'
 import { sendParticipantEmail } from '~/utils/participant-email.server'
 import { processParticipant } from '~/utils/workflow.server'
@@ -65,6 +64,23 @@ import { FormCard } from '~/components/form-card'
 // This is used for client-side validation; server validates against actual setting
 const DEFAULT_MAX_UPLOAD_SIZE_MB = 3
 const MAX_UPLOAD_SIZE = 1024 * 1024 * DEFAULT_MAX_UPLOAD_SIZE_MB
+
+const DOCUMENT_TYPES = ['PASSPORT', 'PHOTO', 'LETTER'] as const
+const REQUIRED_DOCUMENT_TYPES = ['PASSPORT', 'PHOTO']
+const OPTIONAL_DOCUMENT_TYPES = ['LETTER']
+
+function documentTypeLabel(documentType: string) {
+	switch (documentType) {
+		case 'PASSPORT':
+			return 'ID/Passport'
+		case 'PHOTO':
+			return 'Photo'
+		case 'LETTER':
+			return 'Invitation Letter'
+		default:
+			return documentType
+	}
+}
 
 const AttachmentFieldSetSchema = z
 	.object({
@@ -76,7 +92,7 @@ const AttachmentFieldSetSchema = z
 				message: `File size must be less than ${DEFAULT_MAX_UPLOAD_SIZE_MB}MB`,
 			}),
 		altText: z.string().optional(),
-		documentType: z.enum(['PASSPORT', 'PHOTO', 'LETTER']),
+		documentType: z.enum(DOCUMENT_TYPES),
 	})
 	.superRefine((data, ctx) => {
 		if (!data.file) return
@@ -97,9 +113,10 @@ const AttachmentFieldSetSchema = z
 		}
 	})
 	.refine(
-		data => {
-			return Boolean(data.id) || Boolean(data.file?.size)
-		},
+		data =>
+			OPTIONAL_DOCUMENT_TYPES.includes(data.documentType) ||
+			Boolean(data.id) ||
+			Boolean(data.file?.size),
 		{
 			message: 'A file must be attached',
 			path: ['file'],
@@ -155,9 +172,12 @@ export const EditParticipantSchema = z
 				message: 'Date of Birth cannot be in the future',
 			}),
 		nationalityId: z.string({ required_error: 'Nationality is required' }),
+		identityDocumentType: z.enum(['PASSPORT', 'NATIONAL_ID'], {
+			required_error: 'ID type is required',
+		}),
 		passportNumber: z
-			.string({ required_error: 'Passport Number is required' })
-			.regex(/^[a-zA-Z0-9- ]+$/, { message: 'Invalid passport number' })
+			.string({ required_error: 'ID/Passport Number is required' })
+			.regex(/^[a-zA-Z0-9- ]+$/, { message: 'Invalid ID/passport number' })
 			.transform(xssTransform)
 			.transform(value => value?.replace(/[- ]/g, '') ?? '')
 			.transform(value => value.toUpperCase()),
@@ -166,8 +186,9 @@ export const EditParticipantSchema = z
 		// causing stale date comparisons if the server runs for days/weeks.
 		// .refine() evaluates the date at validation time (each request).
 		// Passport must be valid today or in the future (not expired).
+		// Required only for passports (checked below); a national ID has no expiry.
 		passportExpiry: z
-			.date({ required_error: 'Passport Expiry is required' })
+			.date()
 			.refine(
 				(date) => {
 					const today = new Date()
@@ -175,7 +196,8 @@ export const EditParticipantSchema = z
 					return date >= today
 				},
 				{ message: 'Passport must not be expired' },
-			),
+			)
+			.optional(),
 
 		// Professional Info
 		organization: z
@@ -196,28 +218,25 @@ export const EditParticipantSchema = z
 			.transform(value => value.toLowerCase())
 			.transform(xssTransform)
 			.optional(),
-		preferredLanguage: z.enum([
-			'ENGLISH',
-			'FRENCH',
-			'PORTUGUESE',
-			'ARABIC',
-			'SWAHLI',
-			'OTHER',
-		]),
 
-		// Wishlist
 		needsVisa: z.boolean().default(false),
 		needsCarPass: z.boolean().default(false),
 		needsCarFromOrganizer: z.boolean().default(false),
-		meetings: z.array(z.string()).optional(),
 
 		// Documents
 		documents: z.array(AttachmentFieldSetSchema),
 	})
 	.superRefine((data, ctx) => {
+		if (data.identityDocumentType === 'PASSPORT' && !data.passportExpiry) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'Passport Expiry is required',
+				path: ['passportExpiry'],
+			})
+		}
+
 		// Validate all required documents are present
-		const requiredTypes = ['PASSPORT', 'PHOTO', 'LETTER']
-		const missingTypes = requiredTypes.filter(
+		const missingTypes = REQUIRED_DOCUMENT_TYPES.filter(
 			type =>
 				!data.documents.some(
 					doc =>
@@ -229,7 +248,9 @@ export const EditParticipantSchema = z
 		if (missingTypes.length > 0) {
 			ctx.addIssue({
 				code: z.ZodIssueCode.custom,
-				message: `Missing required documents: ${missingTypes.join(', ')}`,
+				message: `Missing required documents: ${missingTypes
+					.map(documentTypeLabel)
+					.join(', ')}`,
 				path: ['documents'],
 			})
 		}
@@ -278,10 +299,6 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
 		orderBy: { name: 'asc' },
 	})
 
-	const meetingTypes = await prisma.meetingType.findMany({
-		where: { tenantId: participant.tenantId },
-	})
-
 	const titles = await prisma.title.findMany({
 		orderBy: { name: 'asc' },
 	})
@@ -299,14 +316,6 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
 		currentTypeId: participant.participantTypeId,
 	})
 
-	// Check if Closed Session quota is still available for this participant
-	// (excluding themselves from the count since they're being edited)
-	const canSelectClosedSession = await isClosedSessionQuotaAvailable({
-		participantId: participant.id,
-		invitationId: participant.invitationId,
-		participantTypeId: participant.participantTypeId,
-	})
-
 	return json({
 		participant: {
 			id: participant.id,
@@ -320,6 +329,7 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
 			familyName: participant.familyName,
 			dateOfBirth: participant.dateOfBirth,
 			nationalityId: participant.nationalityId,
+			identityDocumentType: participant.identityDocumentType,
 			passportNumber: participant.passportNumber,
 			passportExpiry: participant.passportExpiry,
 			organization: participant.organization,
@@ -327,11 +337,9 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
 			countryId: participant.countryId,
 			city: participant.city,
 			email: participant.email,
-			preferredLanguage: participant.preferredLanguage,
 			needsVisa: participant.needsVisa,
 			needsCarPass: participant.needsCarPass,
 			needsCarFromOrganizer: participant.needsCarFromOrganizer,
-			wishList: participant.wishList?.split(',') ?? [],
 			documents: participant.documents.map(doc => ({
 				id: doc.id,
 				documentType: doc.documentType,
@@ -341,12 +349,10 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
 			invitationConstraints: participant.invitation?.invitationConstraints ?? [],
 		},
 		countries,
-		meetingTypes,
 		titles,
 		isFocal,
 		maxUploadSizeMB,
 		allowedParticipantTypes,
-		canSelectClosedSession,
 	})
 }
 
@@ -372,6 +378,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 					email: true,
 					invitationId: true,
 					participantTypeId: true,
+					attendClosedSession: true,
 				},
 			})
 
@@ -454,21 +461,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
 				return
 			}
 
-			// Determine if user is requesting Closed Session
-			let newAttendClosedSession = false
-			if (!typeChanged && data.meetings && data.meetings.length > 0) {
-				// Type didn't change - check if Closed Session is in selected meetings
-				const closedSessionMeetingType = await prisma.meetingType.findFirst({
-					where: {
-						tenantId: data.tenantId,
-						name: 'Closed Session',
-						id: { in: data.meetings },
-					},
-					select: { id: true },
-				})
-				newAttendClosedSession = closedSessionMeetingType !== null
-			}
-			// If type changed, meetings are reset so attendClosedSession = false
+			// There is no meeting wishlist to edit: Closed Session access is kept
+			// as it was, unless the type changed, which resets it.
+			const newAttendClosedSession = typeChanged
+				? false
+				: participant.attendClosedSession
 
 			// Only validate if there's an invitation (quota enforcement)
 			if (participant.invitationId) {
@@ -607,8 +604,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
 		select: { participantTypeId: true },
 	})
 	const participantTypeChanged = originalParticipant?.participantTypeId !== formValues.participantTypeId
-	// If type changed, reset meetings to empty
-	const effectiveMeetings = participantTypeChanged ? [] : (formValues.meetings ?? [])
 
 	// Update document metadata in database for replaced documents
 	const documentsToUpdate = updatedDocuments.filter(doc => 'blob' in doc)
@@ -623,29 +618,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
 		})
 	}
 
-	// Determine if participant is requesting Closed Session (for attendClosedSession field)
-	const closedSessionMeetingType = await prisma.meetingType.findFirst({
-		where: { tenantId: formValues.tenantId, name: 'Closed Session' },
-		select: { id: true },
-	})
-	const attendClosedSession = closedSessionMeetingType
-		? effectiveMeetings.includes(closedSessionMeetingType.id)
-		: false
-
-	// Determine if participant is requesting Executive Council Closed Session
-	const executiveCouncilClosedSessionMeetingType =
-		await prisma.meetingType.findFirst({
-			where: {
-				tenantId: formValues.tenantId,
-				name: 'Executive Council Closed Session',
-			},
-			select: { id: true },
-		})
-	const attendExecutiveCouncilClosedSession =
-		executiveCouncilClosedSessionMeetingType
-			? effectiveMeetings.includes(executiveCouncilClosedSessionMeetingType.id)
-			: false
-
 	// Update participant
 	await prisma.participant.update({
 		where: { id: participantId },
@@ -657,20 +629,25 @@ export async function action({ request, params }: ActionFunctionArgs) {
 			familyName: formValues.familyName!,
 			dateOfBirth: formValues.dateOfBirth,
 			nationalityId: formValues.nationalityId,
+			identityDocumentType: formValues.identityDocumentType,
 			passportNumber: formValues.passportNumber,
-			passportExpiry: formValues.passportExpiry,
+			passportExpiry:
+				formValues.identityDocumentType === 'PASSPORT'
+					? formValues.passportExpiry
+					: null,
 			email: formValues.email ?? null,
 			organization: formValues.organization!,
 			jobTitle: formValues.jobTitle!,
 			countryId: formValues.countryId,
 			city: formValues.city!,
-			preferredLanguage: formValues.preferredLanguage,
 			needsVisa: formValues.needsVisa,
 			needsCarPass: formValues.needsCarPass,
 			needsCarFromOrganizer: formValues.needsCarFromOrganizer,
-			wishList: effectiveMeetings.length > 0 ? effectiveMeetings.join(',') : null,
-			attendClosedSession,
-			attendExecutiveCouncilClosedSession,
+			...(participantTypeChanged && {
+				wishList: null,
+				attendClosedSession: false,
+				attendExecutiveCouncilClosedSession: false,
+			}),
 			stepId: requestReceived.id,
 			status: RequestStatus.PENDING,
 			documents: {
@@ -776,19 +753,7 @@ function DocumentUploadField({
 
 	const DocumentIcon = getDocumentIcon()
 
-	// Format document type name
-	const getDocumentTypeName = () => {
-		switch (documentType) {
-			case 'PHOTO':
-				return 'Photo'
-			case 'PASSPORT':
-				return 'Passport'
-			case 'LETTER':
-				return 'Participation Letter'
-			default:
-				return documentType
-		}
-	}
+	const getDocumentTypeName = () => documentTypeLabel(documentType)
 
 	// Get tooltip hint based on document type
 	const getDocumentHint = () => {
@@ -1031,6 +996,12 @@ function DocumentUploadField({
 						<DocumentIcon className="h-5 w-5 text-primary" />
 						<h3 className="font-semibold text-base">
 							{getDocumentTypeName()}
+							{OPTIONAL_DOCUMENT_TYPES.includes(documentType) && (
+								<span className="font-normal text-muted-foreground">
+									{' '}
+									(Optional)
+								</span>
+							)}
 						</h3>
 					</div>
 					<p className="mt-1 text-xs text-muted-foreground">
@@ -1188,11 +1159,9 @@ export default function EditParticipantRoute() {
 	const {
 		participant,
 		countries,
-		meetingTypes,
 		titles,
 		isFocal,
 		allowedParticipantTypes,
-		canSelectClosedSession,
 	} = useLoaderData<typeof loader>()
 	const actionData = useActionData<typeof action>()
 	const isPending = useIsPending()
@@ -1221,6 +1190,7 @@ export default function EditParticipantRoute() {
 			familyName: participant.familyName,
 			dateOfBirth: participant.dateOfBirth,
 			nationalityId: participant.nationalityId,
+			identityDocumentType: participant.identityDocumentType,
 			passportNumber: participant.passportNumber,
 			passportExpiry: participant.passportExpiry,
 			organization: participant.organization,
@@ -1228,21 +1198,27 @@ export default function EditParticipantRoute() {
 			countryId: participant.countryId,
 			city: participant.city,
 			email: participant.email,
-			preferredLanguage: participant.preferredLanguage,
 			needsVisa: participant.needsVisa,
 			needsCarPass: participant.needsCarPass,
 			needsCarFromOrganizer: participant.needsCarFromOrganizer,
-			meetings: participant.wishList,
-			documents: participant.documents.map(doc => ({
-				id: doc.id,
-				file: undefined,
-				altText: doc.altText ?? doc.documentType,
-				documentType: doc.documentType,
-			})),
+			// One slot per document type, so a document the participant never
+			// uploaded (e.g. the optional invitation letter) can still be added
+			documents: DOCUMENT_TYPES.map(documentType => {
+				const doc = participant.documents.find(
+					d => d.documentType === documentType,
+				)
+				return {
+					id: doc?.id ?? '',
+					file: undefined,
+					altText: doc?.altText ?? documentTypeLabel(documentType),
+					documentType,
+				}
+			}),
 		},
 	})
 
 	const documents = fields.documents.getFieldList()
+	const isNationalId = fields.identityDocumentType.value === 'NATIONAL_ID'
 
 	return (
 		<div className="space-y-6">
@@ -1383,9 +1359,26 @@ export default function EditParticipantRoute() {
 								)}
 							</Field>
 
-							<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+							<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
 								<Field>
-									<Label htmlFor={fields.passportNumber.id}>Passport Number</Label>
+									<Label htmlFor={fields.identityDocumentType.id}>ID Type</Label>
+									<SelectField
+										meta={fields.identityDocumentType}
+										items={[
+											{ name: 'Passport', value: 'PASSPORT' },
+											{ name: 'National ID', value: 'NATIONAL_ID' },
+										]}
+										placeholder="Select"
+									/>
+									{fields.identityDocumentType.errors && (
+										<FieldError>{fields.identityDocumentType.errors}</FieldError>
+									)}
+								</Field>
+
+								<Field>
+									<Label htmlFor={fields.passportNumber.id}>
+										{isNationalId ? 'ID Number' : 'Passport Number'}
+									</Label>
 									<InputField
 										meta={fields.passportNumber}
 										type="text"
@@ -1398,13 +1391,15 @@ export default function EditParticipantRoute() {
 									)}
 								</Field>
 
-								<Field>
-									<Label htmlFor={fields.passportExpiry.id}>Passport Expiry</Label>
-									<DatePickerField meta={fields.passportExpiry} />
-									{fields.passportExpiry.errors && (
-										<FieldError>{fields.passportExpiry.errors}</FieldError>
-									)}
-								</Field>
+								{!isNationalId && (
+									<Field>
+										<Label htmlFor={fields.passportExpiry.id}>Passport Expiry</Label>
+										<DatePickerField meta={fields.passportExpiry} />
+										{fields.passportExpiry.errors && (
+											<FieldError>{fields.passportExpiry.errors}</FieldError>
+										)}
+									</Field>
+								)}
 							</div>
 
 							<Field>
@@ -1484,79 +1479,11 @@ export default function EditParticipantRoute() {
 								</Field>
 							</div>
 
-							<Field>
-								<Label htmlFor={fields.preferredLanguage.id}>
-									Preferred Language
-								</Label>
-								<SelectField
-									meta={fields.preferredLanguage}
-									items={[
-										'ENGLISH',
-										'FRENCH',
-										'PORTUGUESE',
-										'ARABIC',
-										'SWAHLI',
-										'OTHER',
-									].map(language => ({
-										name: language,
-										value: language,
-									}))}
-									placeholder="Select Preferred Language"
-								/>
-								{fields.preferredLanguage.errors && (
-									<FieldError>{fields.preferredLanguage.errors}</FieldError>
-								)}
-							</Field>
 						</CardContent>
 					</Card>
 				</div>
 
-				{/* Section 3: Wishlist (Optional) */}
-				<div className="space-y-4">
-					<h2 className="flex items-center gap-2 text-base font-semibold">
-						Meeting Wishlist (Optional)
-					</h2>
-					<Card>
-						<CardContent className="space-y-4 pt-6">
-							<Field>
-								<fieldset>
-									<CheckboxGroupField
-										meta={fields.meetings}
-										items={meetingTypes
-											.filter(meetingType => {
-												// Closed Session: only show if:
-												// 1. Participant previously had it selected (can't add new during edit), AND
-												// 2. Quota is still available (in case it became full while rejected)
-												if (meetingType.name === 'Closed Session') {
-													return (
-														participant.wishList.includes(meetingType.id) &&
-														canSelectClosedSession
-													)
-												}
-												// Hide Executive Council Closed Session from user registration
-												if (
-													meetingType.name ===
-													'Executive Council Closed Session'
-												) {
-													return false
-												}
-												return true
-											})
-											.map(meetingType => ({
-												name: meetingType.name,
-												value: meetingType.id,
-											}))}
-									/>
-									{fields.meetings.errors && (
-										<FieldError>{fields.meetings.errors}</FieldError>
-									)}
-								</fieldset>
-							</Field>
-						</CardContent>
-					</Card>
-				</div>
-
-				{/* Section 4: Supporting Documents */}
+				{/* Section 3: Supporting Documents */}
 				<div className="space-y-4">
 					<h2 className="flex items-center gap-2 text-base font-semibold">
 						Supporting Documents
