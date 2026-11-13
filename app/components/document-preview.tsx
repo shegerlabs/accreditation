@@ -72,7 +72,7 @@ export function DocumentPreview({
 						<DialogTitle className="text-xl">{title}</DialogTitle>
 						<div className="flex items-center justify-between">
 							<DialogDescription className="text-sm text-gray-500">
-								Preview of {type.toLowerCase()} document
+								Preview of {type}
 							</DialogDescription>
 							<div className="flex items-center gap-2">
 								<Button

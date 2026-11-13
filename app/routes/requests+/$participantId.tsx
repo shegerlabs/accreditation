@@ -135,6 +135,7 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
 			: 'N/A',
 		nationality: participant.nationality.name,
 		passportNumber: participant.passportNumber,
+		identityDocumentType: participant.identityDocumentType,
 		passportExpiry: participant.passportExpiry,
 	}
 
@@ -464,15 +465,23 @@ export default function ParticipantProfile() {
 				/>
 				<InfoCard
 					icon={FileText}
-					label="ID/Passport"
+					label={
+						general.identityDocumentType === 'NATIONAL_ID'
+							? 'National ID'
+							: 'Passport'
+					}
 					items={[
 						{ label: 'Number', value: general.passportNumber ?? 'N/A' },
-						{
-							label: 'Expiry',
-							value: general.passportExpiry
-								? format(new Date(general.passportExpiry), 'PP')
-								: 'N/A',
-						},
+						...(general.identityDocumentType === 'NATIONAL_ID'
+							? []
+							: [
+									{
+										label: 'Expiry',
+										value: general.passportExpiry
+											? format(new Date(general.passportExpiry), 'PP')
+											: 'N/A',
+									},
+								]),
 						{
 							label: 'Language',
 							value: professional.preferredLanguage ?? 'N/A',
