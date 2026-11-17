@@ -1,6 +1,13 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
+// READ-ONLY MIRROR. The database is shared with the admin app
+// (../accreditationadmin), which owns it through Prisma migrations
+// (prisma/migrations there). Copy that app's schema.prisma here after it
+// changes, then `npx prisma generate`. Never run `prisma db push` or
+// `prisma migrate` from this repo against production: it would undo the
+// admin app's migrations.
+
 // Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
 // Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
 
@@ -60,6 +67,7 @@ enum Action {
   CANCEL
   BYPASS
   REPRINT
+  MOVE // Admin moved a participant to another step; never a step's own action
 }
 
 enum AccessLevel {
@@ -131,6 +139,7 @@ enum AuditAction {
   REPRINT
   IMPERSONATE
   IMPERSONATE_END
+  VERIFY
   OTHER
 }
 
@@ -162,6 +171,7 @@ enum AuditEntityType {
   SYSTEM
   BACKUP
   EMAIL_TEMPLATE
+  BOX
   OTHER
 }
 
@@ -217,6 +227,7 @@ model Tenant {
   auditLogs        AuditLog[]
   badgeTemplates   BadgeTemplate[]
   customReports    CustomReport[]
+  boxes            Box[]
 
   @@index([name, email])
 }
@@ -250,6 +261,8 @@ model User {
   eventAccess     UserEventAccess[]
   backups         DatabaseBackup[]
   customReports   CustomReport[]
+  boxes           Box[]
+  boxPlacements   BoxPlacement[]
 }
 
 model UserImage {
@@ -429,6 +442,7 @@ model Event {
   userAccess   UserEventAccess[]
   emailTemplates EmailTemplate[]
   participantTypes EventParticipantType[]
+  boxes            Box[]
 
   @@unique([tenantId, name])
   @@unique([tenantId, name, startDate, endDate])
@@ -595,6 +609,11 @@ model Step {
   slaDurationMinutes Int?     // SLA duration in minutes, null = no SLA
   positionX          Float?   // Visual builder X position
   positionY         Float?   // Visual builder Y position
+  // Set when the step is taken out of the workflow but kept for its approval
+  // history. Retired steps hold no participants and are linked from nowhere.
+  retiredAt         DateTime?
+  /// Where a retired step sat, so restoring can put it back: { predecessorIds, access }.
+  retiredLinks      Json?
 
   createdAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt
@@ -752,14 +771,23 @@ model Participant {
   collectionNotes       String?
   collectedAt           DateTime?
   reprintCount          Int                   @default(0)
+  // Printed in the badge QR code as ?v=. Revoking a badge bumps it, so scans of
+  // the older badge are rejected while the replacement scans normally.
+  badgeVersion          Int                   @default(1)
+  badgeRevokedAt        DateTime?
+  badgeRevokedReason    String?
   stepId                String
-  step                  Step                  @relation(fields: [stepId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  // NoAction, not Cascade: deleting a step must never delete the people at it.
+  // Move them off first (admin "Move participants"), or retire the step.
+  step                  Step                  @relation(fields: [stepId], references: [id], onDelete: NoAction, onUpdate: Cascade)
   createdAt             DateTime              @default(now())
   updatedAt             DateTime              @updatedAt
   deletedAt             DateTime?
   approvals             Approval[]
   documents             ParticipantDocument[]
   emailLogs             EmailLog[]
+  boxMemberships        BoxMember[]
+  boxPlacement          BoxPlacement?
 
   @@unique([tenantId, eventId, passportNumber])
   @@index([deletedAt])
@@ -793,7 +821,8 @@ model Approval {
   participantId String
   participant   Participant    @relation(fields: [participantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   stepId        String
-  step          Step           @relation(fields: [stepId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  // NoAction: a step with history can be retired but not deleted.
+  step          Step           @relation(fields: [stepId], references: [id], onDelete: NoAction, onUpdate: Cascade)
   action        Action         @default(APPROVE)
   result        ApprovalResult
   remarks       String?
@@ -988,4 +1017,88 @@ model EmailLog {
 
   @@index([participantId, createdAt])
   @@index([status])
+}
+
+enum BoxSplit {
+  INVITATION
+  TYPE
+  SURNAME
+  SIZE
+}
+
+enum BoxMemberKind {
+  INCLUDE
+  EXCLUDE
+}
+
+// A saved grouping of an event's participants that badge printers print in
+// bulk. Every printer assigned to the event sees every box.
+// Membership is never stored per participant; it is computed when read:
+// everyone matching the rule, plus people added by hand, minus people left
+// out, plus anyone whose badge was printed through this box (BoxPlacement).
+model Box {
+  id                 String         @id @default(cuid())
+  tenantId           String
+  tenant             Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  eventId            String
+  event              Event          @relation(fields: [eventId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  name               String
+  // false = hand-picked only; the rule fields below are then ignored.
+  hasRule            Boolean        @default(true)
+  participantTypeIds String[]
+  // No types and not closed-session-only = everyone not in a box above.
+  closedSessionOnly  Boolean        @default(false)
+  // List order. A person goes in the first box whose rule matches them,
+  // unless their badge was printed through, or they were added by hand to,
+  // another box.
+  position           Int            @default(0)
+  splitBy            BoxSplit?
+  // Most people per smaller box when splitBy is SIZE.
+  batchSize          Int            @default(25)
+  // Most people per smaller box when splitBy is TYPE or SURNAME; null = no
+  // limit. A group over it is cut into numbered batches (part "<group>#<n>").
+  maxPerBox          Int?
+  createdById        String?
+  createdBy          User?          @relation(fields: [createdById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+  members            BoxMember[]
+  placements         BoxPlacement[]
+
+  @@unique([eventId, name])
+}
+
+// A hand edit to a box: added although the rule doesn't match (INCLUDE), or
+// left out although it does (EXCLUDE).
+model BoxMember {
+  boxId         String
+  box           Box           @relation(fields: [boxId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  participantId String
+  participant   Participant   @relation(fields: [participantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  kind          BoxMemberKind
+  createdAt     DateTime      @default(now())
+
+  @@id([boxId, participantId])
+  @@index([participantId])
+}
+
+// Where a printed badge physically is. Written when a badge is printed through
+// a box, so the person stays in that box (and smaller box) whatever changes
+// afterwards. One per participant; an admin unlock removes it.
+model BoxPlacement {
+  participantId String      @id
+  participant   Participant @relation(fields: [participantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  boxId         String
+  box           Box         @relation(fields: [boxId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  // The split in force when printed, so a later change of split can't misfile it.
+  splitBy       BoxSplit?
+  part          String?
+  // Null while reserved: a Size batch froze when a batch-mate printed, but this
+  // badge hasn't printed yet.
+  printedById   String?
+  printedBy     User?       @relation(fields: [printedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  printedAt     DateTime?
+  createdAt     DateTime    @default(now())
+
+  @@index([boxId])
 }

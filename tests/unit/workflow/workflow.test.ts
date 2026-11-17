@@ -172,14 +172,15 @@ describe('Workflow Action Validation', () => {
 		Action.ARCHIVE,
 		Action.BYPASS,
 		Action.CANCEL,
+		Action.MOVE,
 	]
 
 	it.each(validActions)('should recognize %s as a valid action', action => {
 		expect(Object.values(Action)).toContain(action)
 	})
 
-	it('should have 9 defined actions', () => {
-		expect(Object.values(Action)).toHaveLength(9)
+	it('should have 10 defined actions', () => {
+		expect(Object.values(Action)).toHaveLength(10)
 	})
 })
 
