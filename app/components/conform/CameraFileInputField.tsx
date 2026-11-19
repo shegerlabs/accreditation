@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Button } from '~/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '~/components/ui/dialog'
 import { Input } from '~/components/ui/input'
+import { encodePassportPhoto, GREEN_CAST_MESSAGE } from '~/utils/passport-photo'
 
 export const CameraFileInputField = ({
 	meta,
@@ -58,63 +59,45 @@ export const CameraFileInputField = ({
 		setIsCameraReady(false)
 	}
 
-	const capturePhoto = () => {
-		if (!videoRef.current) return
+	const capturePhoto = async () => {
+		const video = videoRef.current
+		if (!video || video.videoWidth === 0 || video.videoHeight === 0) return
 
-		// Target dimensions: 35x45mm at 300 DPI = 413x531 pixels
-		const targetWidth = 413
-		const targetHeight = 531
-		const videoWidth = videoRef.current.videoWidth
-		const videoHeight = videoRef.current.videoHeight
-
-		const canvas = document.createElement('canvas')
-		canvas.width = targetWidth
-		canvas.height = targetHeight
-		const ctx = canvas.getContext('2d')
-		if (!ctx) return
-
-		// Calculate crop to maintain 35x45mm aspect ratio (0.778)
-		const targetAspect = targetWidth / targetHeight // 0.778
-		const sourceAspect = videoWidth / videoHeight
-
-		let sx = 0
-		let sy = 0
-		let sw = videoWidth
-		let sh = videoHeight
-
-		if (sourceAspect > targetAspect) {
-			// Video is wider, crop horizontally (center crop)
-			sw = videoHeight * targetAspect
-			sx = (videoWidth - sw) / 2
-		} else {
-			// Video is taller, crop vertically (center crop)
-			sh = videoWidth / targetAspect
-			sy = (videoHeight - sh) / 2
+		// Draw only once the camera has presented a decoded frame. Grabbing
+		// earlier can return a frame whose colour planes are still empty, which
+		// comes out green.
+		if ('requestVideoFrameCallback' in video) {
+			await new Promise<void>(resolve => {
+				video.requestVideoFrameCallback(() => resolve())
+				setTimeout(resolve, 500)
+			})
 		}
 
-		// Draw cropped and scaled image to exact 35x45mm dimensions
-		ctx.drawImage(videoRef.current, sx, sy, sw, sh, 0, 0, targetWidth, targetHeight)
+		let file: File
+		try {
+			file = await encodePassportPhoto(
+				video,
+				video.videoWidth,
+				video.videoHeight,
+				`photo-${Date.now()}.jpg`,
+			)
+		} catch (error) {
+			alert(
+				error instanceof Error && error.message === GREEN_CAST_MESSAGE
+					? GREEN_CAST_MESSAGE
+					: 'Failed to capture photo. Please try again.',
+			)
+			return
+		}
+		if (!fileInputRef.current) return
 
-		canvas.toBlob(
-			blob => {
-				if (blob && fileInputRef.current) {
-					const file = new File([blob], `photo-${Date.now()}.jpg`, {
-						type: 'image/jpeg',
-					})
-					// Set the file in the form input
-					const dataTransfer = new DataTransfer()
-					dataTransfer.items.add(file)
-					fileInputRef.current.files = dataTransfer.files
-					// Trigger change event for Conform
-					const event = new Event('change', { bubbles: true })
-					fileInputRef.current.dispatchEvent(event)
-					stopCamera()
-					setShowCamera(false)
-				}
-			},
-			'image/jpeg',
-			0.9,
-		)
+		const dataTransfer = new DataTransfer()
+		dataTransfer.items.add(file)
+		fileInputRef.current.files = dataTransfer.files
+		// Trigger change event for Conform
+		fileInputRef.current.dispatchEvent(new Event('change', { bubbles: true }))
+		stopCamera()
+		setShowCamera(false)
 	}
 
 	const switchCamera = async () => {

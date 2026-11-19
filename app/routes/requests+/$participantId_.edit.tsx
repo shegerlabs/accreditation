@@ -18,6 +18,10 @@ import { HoneypotInputs } from 'remix-utils/honeypot/react'
 import { z } from 'zod'
 import { DatePickerField } from '~/components/conform/DatePickerField'
 import { CameraFileInputField } from '~/components/conform/CameraFileInputField'
+import {
+	cropFileToPassportPhoto,
+	GREEN_CAST_MESSAGE,
+} from '~/utils/passport-photo'
 import { FileInputField } from '~/components/conform/FileInputField'
 import { InputField } from '~/components/conform/InputField'
 import { SelectField } from '~/components/conform/SelectField'
@@ -766,129 +770,6 @@ function DocumentUploadField({
 		}
 	}
 
-	// Function to crop and resize image to 35x45mm (413x531px at 300 DPI)
-	const cropImageTo35x45mm = (file: File): Promise<File> => {
-		return new Promise((resolve, reject) => {
-			// Validate file type first
-			if (!file.type.startsWith('image/')) {
-				reject(new Error(`Invalid file type: ${file.type}. Expected an image file.`))
-				return
-			}
-
-			// Check file size
-			if (file.size === 0) {
-				reject(new Error('File is empty'))
-				return
-			}
-
-			// Use FileReader to load the image as data URL (more reliable than object URL)
-			const reader = new FileReader()
-			let isResolved = false
-
-			reader.onload = (e) => {
-				if (isResolved) return
-
-				const dataUrl = e.target?.result as string
-				if (!dataUrl) {
-					isResolved = true
-					reject(new Error('Failed to read file as data URL'))
-					return
-				}
-
-				const img = new Image()
-
-				img.onload = () => {
-					if (isResolved) return
-
-					try {
-						// Validate image loaded successfully
-						if (img.width === 0 || img.height === 0) {
-							isResolved = true
-							reject(new Error('Invalid image dimensions'))
-							return
-						}
-
-						// Target dimensions: 35x45mm at 300 DPI = 413x531 pixels
-						const targetWidth = 413
-						const targetHeight = 531
-						const targetAspect = targetWidth / targetHeight // 0.778
-
-						const canvas = document.createElement('canvas')
-						canvas.width = targetWidth
-						canvas.height = targetHeight
-						const ctx = canvas.getContext('2d')
-						if (!ctx) {
-							isResolved = true
-							reject(new Error('Could not get canvas context'))
-							return
-						}
-
-						// Calculate crop to maintain 35x45mm aspect ratio
-						const sourceAspect = img.width / img.height
-						let sx = 0
-						let sy = 0
-						let sw = img.width
-						let sh = img.height
-
-						if (sourceAspect > targetAspect) {
-							// Image is wider, crop horizontally (center crop)
-							sw = img.height * targetAspect
-							sx = (img.width - sw) / 2
-						} else {
-							// Image is taller, crop vertically (center crop)
-							sh = img.width / targetAspect
-							sy = (img.height - sh) / 2
-						}
-
-						// Draw cropped and scaled image to exact 35x45mm dimensions
-						ctx.drawImage(img, sx, sy, sw, sh, 0, 0, targetWidth, targetHeight)
-
-						canvas.toBlob(
-							blob => {
-								if (isResolved) return
-								isResolved = true
-
-								if (blob) {
-									const croppedFile = new File([blob], file.name.replace(/\.[^/.]+$/, '.jpg'), {
-										type: 'image/jpeg',
-										lastModified: Date.now(),
-									})
-									resolve(croppedFile)
-								} else {
-									reject(new Error('Failed to create blob from canvas'))
-								}
-							},
-							'image/jpeg',
-							0.9,
-						)
-					} catch (error) {
-						if (isResolved) return
-						isResolved = true
-						reject(error instanceof Error ? error : new Error(String(error)))
-					}
-				}
-
-				img.onerror = () => {
-					if (isResolved) return
-					isResolved = true
-					reject(new Error(`Failed to load image from data URL. File type: ${file.type}, Size: ${file.size} bytes`))
-				}
-
-				// Load image from data URL
-				img.src = dataUrl
-			}
-
-			reader.onerror = () => {
-				if (isResolved) return
-				isResolved = true
-				reject(new Error(`Failed to read file: ${reader.error?.message || 'Unknown error'}`))
-			}
-
-			// Read file as data URL
-			reader.readAsDataURL(file)
-		})
-	}
-
 	// Set up file change listener for preview and auto-crop
 	useEffect(() => {
 		if (!isPhoto) return
@@ -917,7 +798,7 @@ function DocumentUploadField({
 				isProcessing = true
 				try {
 					// Automatically crop to 35x45mm
-					const croppedFile = await cropImageTo35x45mm(file)
+					const croppedFile = await cropFileToPassportPhoto(file)
 
 					// Replace the file in the input
 					if (!input) {
@@ -949,7 +830,11 @@ function DocumentUploadField({
 						}, 100)
 					}
 				} catch (error) {
-					alert(`Failed to process image: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again.`)
+					alert(
+						error instanceof Error && error.message === GREEN_CAST_MESSAGE
+							? GREEN_CAST_MESSAGE
+							: `Failed to process image: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again.`,
+					)
 					// Reset input on error
 					const currentInput = fileInputRef.current?.querySelector('input[type="file"]') as HTMLInputElement
 					if (currentInput) {
